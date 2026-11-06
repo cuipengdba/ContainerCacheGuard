@@ -285,3 +285,47 @@ func TestSafeOpenWalkFallback(t *testing.T) {
 		t.Fatal("fallback followed symlink")
 	}
 }
+
+func TestRecheckRetainsPartialAdviceButBoundsRetries(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "pending")
+	if err := os.WriteFile(p, make([]byte, 65536), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := safeOpen(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := statFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := resident(f, 0, 65536)
+	f.Close()
+	if err != nil || res == 0 {
+		t.Fatalf("need resident fixture: %d %v", res, err)
+	}
+	e := newEngine(defaultConfig(), nil)
+	defer e.close()
+	k := regionKey{id.Dev, id.Ino, 0}
+	r := &region{Key: k, Path: p, ID: id, Length: 65536, After: res, Before: res, Check: true, Attempts: 1}
+	e.regions[k] = r
+	e.ops.tokens = 10
+	e.scan.tokens = 1 << 20
+	var allow atomic.Bool
+	allow.Store(true)
+	now := time.Now()
+	e.inspect(r, now, &allow)
+	if e.regions[k] != r || r.Check || !r.Due.After(now) || e.stats.DeferredRetries != 1 {
+		t.Fatal("candidate lost before delayed invalidation", r, e.stats)
+	}
+	r.Check = true
+	r.Attempts = 3
+	r.Due = time.Time{}
+	e.inspect(r, now, &allow)
+	if e.regions[k] != nil {
+		t.Fatal("unbounded retry")
+	}
+	if e.stats.AdviceBytes != 0 {
+		t.Fatal("recheck itself issued advice")
+	}
+}

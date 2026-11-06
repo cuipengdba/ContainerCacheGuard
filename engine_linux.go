@@ -30,6 +30,7 @@ type Counters struct {
 	ReappearedBytes       int64    `json:"observed_reappeared_bytes"`
 	Protected             uint64   `json:"protected_regions"`
 	Ineffective           uint64   `json:"ineffective_advice"`
+	DeferredRetries       uint64   `json:"deferred_retries"`
 	Sweeps                uint64   `json:"inventory_sweeps"`
 	Rate                  int64    `json:"current_advice_rate_bytes_per_second"`
 	HintEvents            uint64   `json:"hint_events"`
@@ -58,6 +59,7 @@ type region struct {
 	Length, After, Before int64
 	Due                   time.Time
 	Check                 bool
+	Attempts              int
 	Until                 time.Time
 }
 type budget struct {
@@ -292,6 +294,17 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			e.cooldown = now.Add(time.Duration(e.c.RecheckSeconds) * time.Second)
 			return
 		}
+		// DONTNEED may start asynchronous writeback without invalidating every
+		// page immediately. Retain a still-resident candidate for a bounded
+		// retry instead of waiting for a potentially long whole-tree sweep.
+		// A region that reappeared above was protected before this branch.
+		if res > 0 && r.After > 0 && r.Attempts < 3 {
+			r.Check = false
+			r.Before = res
+			r.Due = now.Add(time.Duration(e.c.RecheckSeconds) * time.Second)
+			e.stats.DeferredRetries++
+			return
+		}
 		e.removeRegion(r)
 		return
 	}
@@ -322,6 +335,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		return
 	}
 	e.stats.AdviceBytes += r.Length
+	r.Attempts++
 	after, err := resident(f, r.Key.Offset, r.Length)
 	if err != nil {
 		e.failure(err)
