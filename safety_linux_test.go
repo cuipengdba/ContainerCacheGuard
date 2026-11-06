@@ -195,7 +195,8 @@ func TestEngineObserveAndBoundedIndex(t *testing.T) {
 	eng := newEngine(c, []string{d})
 	defer eng.close()
 	var allow atomic.Bool
-	for i := 0; i < 20; i++ {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && eng.stats.Overflow == 0 {
 		eng.work(context.Background(), &allow)
 		time.Sleep(10 * time.Millisecond)
 	}

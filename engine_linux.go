@@ -339,7 +339,11 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 }
 func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	now := time.Now()
-	e.duty.refill(now, float64(e.c.WorkerBudgetMS)/1000, float64(e.c.WorkerBudgetMS)/1000)
+	dutyRate := float64(e.c.WorkerBudgetMS) / 1000
+	if !allow.Load() && dutyRate > 0.005 {
+		dutyRate = 0.005
+	}
+	e.duty.refill(now, dutyRate, dutyRate)
 	slice := e.duty.tokens
 	if slice > 0.005 {
 		slice = 0.005
