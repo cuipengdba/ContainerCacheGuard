@@ -37,6 +37,7 @@ type Config struct {
 	Trigger                      string   `json:"trigger"`
 	MemoryHighRatio              float64  `json:"memory_high_ratio"`
 	MemoryCriticalRatio          float64  `json:"memory_critical_ratio"`
+	CriticalMode                 string   `json:"critical_mode"`
 	MaxDirtyBytes                int64    `json:"max_dirty_bytes"`
 	MaxIOBytesPerSecond          int64    `json:"max_io_bytes_per_second"`
 	MaxIOPSIAvg10                float64  `json:"max_io_psi_avg10"`
@@ -66,7 +67,7 @@ func defaultConfig() Config {
 		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
 		StateFile:    "/tmp/containercacheguard/status.json", SignalMaxAgeSeconds: 10,
 		IntervalMS: 1000, LogIntervalSeconds: 10, WarmupSeconds: 60, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
-		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
+		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, CriticalMode: "pause", MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
 		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
 		DiscoverEntriesPerSecond: 500, MaxFiles: 150000, MaxDirectories: 20000, MaxRegions: 8192, MaxOperationsPerSecond: 1000,
 		MaxCPUPercent: 5, MaxRSSBytes: 128 * MiB, MaxReappearanceRatio: 0.25, RecheckSeconds: 5, WorkerBudgetMS: 25,
@@ -110,6 +111,9 @@ func (c Config) validate() error {
 	}
 	if c.Trigger != "budget" && c.Trigger != "pressure" && c.Trigger != "always" {
 		return errors.New("trigger 必须为 budget、pressure 或 always")
+	}
+	if c.CriticalMode != "pause" && c.CriticalMode != "bounded" {
+		return errors.New("critical_mode 必须为 pause 或 bounded")
 	}
 	if c.IntervalMS < 100 || c.IntervalMS > 60000 || c.WorkerBudgetMS < 1 || c.WorkerBudgetMS > 1000 {
 		return errors.New("interval_ms 范围100..60000，worker_budget_ms范围1..1000")

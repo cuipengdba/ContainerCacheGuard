@@ -58,3 +58,26 @@ func TestMemoryBudgetSubtractsShmemAndUnlimited(t *testing.T) {
 		t.Fatal(d)
 	}
 }
+
+func TestBoundedCriticalStillHonorsSafety(t *testing.T) {
+	c := defaultConfig()
+	c.Action = "enforce"
+	c.WarmupSeconds = 0
+	c.CriticalMode = "bounded"
+	c.CacheTargetBytes = 100 * MiB
+	now := time.Now()
+	m := Metrics{Current: 1024 * MiB, Limit: 1024 * MiB, File: 900 * MiB}
+	d := decide(c, m, now, now, false, 0)
+	if !d.Allow || d.State != "CONTROL_CRITICAL" {
+		t.Fatal(d)
+	}
+	m.Dirty = c.MaxDirtyBytes + 1
+	if decide(c, m, now, now, false, 0).Allow {
+		t.Fatal("critical bypassed dirty guard")
+	}
+	m.Dirty = 0
+	m.OOMKill = 1
+	if decide(c, m, now, now, false, 0).Allow {
+		t.Fatal("critical bypassed OOM guard")
+	}
+}

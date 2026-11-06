@@ -43,7 +43,8 @@
 | `cache_target_ratio` | `0.25` | 有限 memory.max 的 25% 为缓存软目标。没有可见有限限额时，budget/pressure 模式必须显式配置字节目标 |
 | `trigger` | `budget` | 文件缓存超过目标就允许试探；`pressure` 还要求内存用量超过 high 比例；`always` 为显式持续治理，仍受全部保护约束 |
 | `memory_high_ratio` | `0.85` | pressure 触发模式的用量比例；不修改 memory.high |
-| `memory_critical_ratio` | `0.95` | 达到可见限额95%时停止推测性回收并报告 CRITICAL，避免临界时制造更多读写；不是 OOM 保护保证 |
+| `memory_critical_ratio` | `0.95` | 达到可见限额95%时进入临界区，按 critical_mode 决定停止或有限继续；不是 OOM 保护保证 |
+| `critical_mode` | `pause` | 默认临界时停止推测性回收。`bounded` 显式允许在临界区继续原有预算内的回收，适合经验证的低复用备份输出范围；仍遵守脏页、IO、业务延迟、自身开销和新增 OOM kill 保护，不自动提速、不写 cgroup 限额。一般业务目录先保留 pause |
 | `max_dirty_bytes` | `134217728`（128MiB） | dirty+writeback 超过此值暂停回收。0 表示只允许该统计为0；不代表每个目标页严格干净 |
 | `max_io_bytes_per_second` | `0` | 目标 cgroup 累计 io.stat 推算的读写流量保护阈值，0禁用；配置非零而接口缺失时停止动作 |
 | `max_io_psi_avg10` | `10` | IO PSI some avg10 百分比超过10退让，0禁用；PSI 缺失显示 unknown，不伪装成0，但不会单独阻止全部运行 |
@@ -59,6 +60,10 @@
 ```
 
 同样负载下的生产阈值必须由测量确定。把所有保护阈值调得很宽，可以得到更大的回收数字，也可能掩盖业务损失；实验中调整的数值会单独记录。
+
+持续写入与只读扫描需要分别配置。若正常写入的 dirty+writeback 已高于 max_dirty_bytes，工具会长期退让；此时不能声称已经控制缓存。先确认正常脏页范围、磁盘余量和写入时延，再为低复用输出路径单独调整阈值。min_file_age_seconds 仍跳过近期改写文件；一个一直增长的大文件可能长期无法回收，应考虑应用轮转或合作式接口。工具不会为了压低缓存主动 fsync 整个目录。
+
+io.stat 在 device-mapper 等堆叠存储上可能同时列出逻辑盘和物理盘。本版流量保护累计可见设备，可能重复计算；它是保守退让信号，不能当作宿主物理磁盘吞吐。测试报告应选定同一底层设备另行比较。
 
 ## 速度、保护时间和自身预算
 

@@ -54,7 +54,8 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 	if m.OOMKill > oomBaseline {
 		return stop("CRITICAL", "new_oom_kill")
 	}
-	if m.Limit > 0 && float64(m.Current) >= float64(m.Limit)*c.MemoryCriticalRatio {
+	critical := m.Limit > 0 && float64(m.Current) >= float64(m.Limit)*c.MemoryCriticalRatio
+	if critical && c.CriticalMode == "pause" {
 		return stop("CRITICAL", "memory_critical_stop_speculative_reclaim")
 	}
 	if c.MinNodeAvailableBytes > 0 && (m.NodeAvailable <= 0 || m.NodeAvailable < c.MinNodeAvailableBytes) {
@@ -98,6 +99,10 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 		d.Reason = "explicit_continuous_policy"
 	}
 	d.Allow = true
+	if critical {
+		d.State = "CONTROL_CRITICAL"
+		d.Reason = "explicit_bounded_critical_reclaim"
+	}
 	return d
 }
 func max64(a, b int64) int64 {
