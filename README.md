@@ -19,6 +19,7 @@ Linux 的 `POSIX_FADV_DONTNEED` 是建议接口。它不能保证立即清除脏
 - [PG18 备份参数](docs/PG18-OPTIONS.zh.md)：全部原生参数索引及缓存控制的适用范围。
 - [从源码构建](docs/BUILD.zh.md)：上游源码、静态工具链、离线构建与实际验证范围。
 - [容器部署与接入](docs/DEPLOYMENT.zh.md)：同 Pod/独立 Job 的选择、挂载、UID、安全策略、监控和回退。
+- [恢复与时间预算](docs/RECOVERY.zh.md)：格式选择、24 小时窗口、提前合成、实际恢复和失败回退。
 
 ## 交付形式
 
