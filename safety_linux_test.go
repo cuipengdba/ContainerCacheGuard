@@ -252,14 +252,18 @@ func TestAccessHintsDoNotObserveTheirOwnScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.hints.poll(e, time.Now())
+	e.hints.poll(e, time.Now(), time.Now().Add(time.Second))
 	if e.hints.events != 0 {
 		t.Fatal("own scan triggered access hints", e.hints.events)
 	}
 	if _, err = os.ReadFile(p); err != nil {
 		t.Fatal(err)
 	}
-	e.hints.poll(e, time.Now())
+	e.hints.poll(e, time.Now(), time.Now().Add(-time.Second))
+	if e.hints.events != 0 || e.hints.bufferEnd == 0 {
+		t.Fatal("expired budget processed or lost pending events")
+	}
+	e.hints.poll(e, time.Now(), time.Now().Add(time.Second))
 	if e.hints.files[p] == nil || e.hints.events == 0 {
 		t.Fatal("real read not observed")
 	}

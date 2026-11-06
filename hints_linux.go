@@ -21,14 +21,15 @@ type fileHint struct {
 	until, next time.Time
 }
 type accessHints struct {
-	fd                int
-	watches           map[int]dirEntry
-	paths             map[string]int
-	files             map[string]*fileHint
-	queue             []*fileHint
-	cursor            int
-	buffer            []byte
-	events, overflows uint64
+	fd                   int
+	watches              map[int]dirEntry
+	paths                map[string]int
+	files                map[string]*fileHint
+	queue                []*fileHint
+	cursor               int
+	buffer               []byte
+	bufferPos, bufferEnd int
+	events, overflows    uint64
 }
 
 func newAccessHints() *accessHints {
@@ -62,25 +63,30 @@ func (h *accessHints) watch(path string, dev uint64, limit int) {
 	h.watches[wd] = dirEntry{path, dev}
 	h.paths[path] = wd
 }
-func (h *accessHints) poll(e *engine, now time.Time) {
+func (h *accessHints) poll(e *engine, now, deadline time.Time) {
 	if h.fd < 0 {
 		return
 	}
-	n, err := syscall.Read(h.fd, h.buffer)
-	if err != nil {
-		return
+	if h.bufferPos >= h.bufferEnd {
+		n, err := syscall.Read(h.fd, h.buffer)
+		if err != nil {
+			return
+		}
+		h.bufferPos, h.bufferEnd = 0, n
 	}
-	for pos := 0; pos+16 <= n; {
+	for h.bufferPos+16 <= h.bufferEnd && time.Now().Before(deadline) {
+		pos := h.bufferPos
 		wd := int(int32(binary.NativeEndian.Uint32(h.buffer[pos:])))
 		mask := binary.NativeEndian.Uint32(h.buffer[pos+4:])
 		length := int(binary.NativeEndian.Uint32(h.buffer[pos+12:]))
 		end := pos + 16 + length
-		if end > n {
+		if end > h.bufferEnd {
 			h.overflows++
+			h.bufferPos = h.bufferEnd
 			break
 		}
 		name := strings.TrimRight(string(h.buffer[pos+16:end]), "\x00")
-		pos = end
+		h.bufferPos = end
 		if mask&syscall.IN_Q_OVERFLOW != 0 {
 			h.overflows++
 			continue

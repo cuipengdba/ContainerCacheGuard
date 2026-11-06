@@ -377,7 +377,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	e.advice.refill(now, float64(e.rate), float64(e.rate))
 	e.discover(now, now.Add(time.Duration(slice*0.15*float64(time.Second))))
 	if e.hints != nil {
-		e.hints.poll(e, now)
+		e.hints.poll(e, now, now.Add(time.Duration(slice*0.30*float64(time.Second))))
 	}
 	// Due regions are revisited independently of full-directory coverage.
 	count := len(e.queue)
