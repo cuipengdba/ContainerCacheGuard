@@ -295,7 +295,8 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 	lastLog := time.Time{}
 	busySince := time.Time{}
 	nextSample := time.Time{}
-	tick := time.NewTicker(100 * time.Millisecond)
+	nextWork := time.Time{}
+	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		select {
@@ -364,9 +365,14 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 				nextSample = now.Add(time.Duration(c.IntervalMS) * time.Millisecond)
 			}
 			// A single worker. Even if a syscall blocks, never spawn replacements.
-			if !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" && s.Decision.State != "CRITICAL" && s.Metrics.Error == "" {
+			if !now.Before(nextWork) && !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" && s.Decision.State != "CRITICAL" && s.Metrics.Error == "" {
 				s.WorkerBusy = true
 				busySince = now
+				spacing := 200 * time.Millisecond
+				if allow.Load() {
+					spacing = 20 * time.Millisecond
+				}
+				nextWork = now.Add(spacing)
 				work <- struct{}{}
 			}
 		}
