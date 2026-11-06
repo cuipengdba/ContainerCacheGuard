@@ -56,6 +56,9 @@ func TestWebScopeAndHistory(t *testing.T) {
 		if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {
 			t.Fatalf("%s: %d", route, response.StatusCode)
 		}
+		if _, err := time.Parse(time.RFC3339Nano, response.Header.Get("X-CCG-Server-Time")); err != nil {
+			t.Fatalf("%s missing server time: %v", route, err)
+		}
 	}
 }
 
