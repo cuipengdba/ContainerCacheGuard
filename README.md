@@ -80,7 +80,6 @@ kill -TERM <PID>   # 退出；不结束业务进程
 - [问题分析与长期治理](docs/OPERATIONS.zh.md)：怎样向团队解释问题、与旧工具的区别、短中长期措施和验收方法。
 - [测试报告与复现方法](docs/TESTING.zh.md)：严格区分通过、进行中和未验证。
 - [最终实验数字与未达标项](docs/RESULTS.zh.md)：完整备份、校验阶段、重复读取、热点代价、实际恢复。
-- [普通话讲解视频](docs/VIDEOS.zh.md)：约5分钟问题分析、约10分钟设计与测试结论，附字幕及逐字稿。
 - [构建与发布](docs/BUILD.zh.md)：静态 amd64/arm64，标准 Go 工具链。
 - [需求、任务与版本变化](docs/ROADMAP.zh.md)。
 
