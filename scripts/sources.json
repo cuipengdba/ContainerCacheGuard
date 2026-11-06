@@ -1,0 +1,38 @@
+[
+  {
+    "name": "musl-1.2.6.tar.gz",
+    "url": "https://musl.libc.org/releases/musl-1.2.6.tar.gz",
+    "size": 1082499,
+    "sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+  },
+  {
+    "name": "zlib-1.4.tar.gz",
+    "url": "https://zlib.net/zlib-1.4.tar.gz",
+    "size": 1507140,
+    "sha256": "02dd159783677a749c04adbdd02b55b8a2bcc7e054f51b76b549199a916ad584"
+  },
+  {
+    "name": "lz4-1.11.0.tar.gz",
+    "url": "https://codeload.github.com/lz4/lz4/tar.gz/refs/tags/v1.11.0",
+    "size": 545646,
+    "sha256": "247e5fa64da5f7b75ee3dd3bed484076396c9ebe8254d9ccf693eb62800c5e26"
+  },
+  {
+    "name": "zstd-1.5.7.tar.gz",
+    "url": "https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7",
+    "size": 2451884,
+    "sha256": "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3"
+  },
+  {
+    "name": "openssl-3.5.9.tar.gz",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "size": 53279637,
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+    "official_checksum_verified": true
+  },
+  {
+    "name": "postgresql-18.6.tar.bz2",
+    "url": "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.bz2",
+    "sha256": "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f"
+  }
+]
