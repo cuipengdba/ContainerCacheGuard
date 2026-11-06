@@ -32,6 +32,11 @@ type Counters struct {
 	Ineffective           uint64   `json:"ineffective_advice"`
 	Sweeps                uint64   `json:"inventory_sweeps"`
 	Rate                  int64    `json:"current_advice_rate_bytes_per_second"`
+	HintEvents            uint64   `json:"hint_events"`
+	HintOverflows         uint64   `json:"hint_overflows"`
+	Watches               int      `json:"directory_watches"`
+	HintFiles             int      `json:"hint_files"`
+	HintsAvailable        bool     `json:"access_hints_available"`
 }
 type fileEntry struct {
 	Path   string
@@ -101,12 +106,21 @@ type engine struct {
 	nextIncrease                 time.Time
 	cooldown                     time.Time
 	stats                        Counters
+	hints                        *accessHints
 }
 
 func newEngine(c Config, roots []string) *engine {
-	return &engine{c: c, roots: roots, known: map[string]*fileEntry{}, regions: map[regionKey]*region{}, rate: c.InitialReclaimBytesPerSecond}
+	e := &engine{c: c, roots: roots, known: map[string]*fileEntry{}, regions: map[regionKey]*region{}, rate: c.InitialReclaimBytesPerSecond}
+	e.stats.DetectedRoots = append([]string{}, roots...)
+	if c.AccessHints {
+		e.hints = newAccessHints()
+	}
+	return e
 }
 func (e *engine) close() {
+	if e.hints != nil {
+		e.hints.close()
+	}
 	if e.dir != nil {
 		e.dir.Close()
 	}
@@ -133,6 +147,9 @@ func (e *engine) add(path string, rootDev uint64) {
 		return
 	}
 	if id.Mode&syscall.S_IFMT == syscall.S_IFDIR {
+		if e.hints != nil {
+			e.hints.watch(path, id.Dev, e.c.MaxWatches)
+		}
 		if len(e.dirs) >= e.c.MaxDirectories {
 			e.stats.Overflow++
 			return
@@ -349,10 +366,14 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		e.nextIncrease = now.Add(30 * time.Second)
 	}
 	e.advice.refill(now, float64(e.rate), float64(e.rate))
-	e.discover(now, now.Add(time.Duration(slice/3*float64(time.Second))))
+	e.discover(now, now.Add(time.Duration(slice/5*float64(time.Second))))
+	if e.hints != nil {
+		e.hints.poll(e, now)
+		e.hints.sample(e, now, now.Add(time.Duration(slice/2*float64(time.Second))))
+	}
 	// Due regions are revisited independently of full-directory coverage.
 	count := len(e.queue)
-	for i := 0; i < count && time.Now().Before(deadline); i++ {
+	for i := 0; i < count && time.Now().Before(deadline.Add(-time.Duration(slice/5*float64(time.Second)))); i++ {
 		if len(e.queue) == 0 {
 			break
 		}
@@ -439,6 +460,13 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	e.stats.Directories = len(e.dirs)
 	e.stats.Regions = len(e.regions)
 	e.stats.Rate = e.rate
+	if e.hints != nil {
+		e.stats.HintEvents = e.hints.events
+		e.stats.HintsAvailable = e.hints.fd >= 0
+		e.stats.HintOverflows = e.hints.overflows
+		e.stats.Watches = len(e.hints.watches)
+		e.stats.HintFiles = len(e.hints.files)
+	}
 	e.stats.DetectedRoots = append([]string{}, e.roots...)
 	return e.stats
 }

@@ -55,6 +55,9 @@ type Config struct {
 	MaxReappearanceRatio         float64  `json:"max_reappearance_ratio"`
 	RecheckSeconds               int      `json:"recheck_seconds"`
 	WorkerBudgetMS               int      `json:"worker_budget_ms"`
+	AccessHints                  bool     `json:"access_hints"`
+	MaxWatches                   int      `json:"max_watches"`
+	MaxHintFiles                 int      `json:"max_hint_files"`
 }
 
 func defaultConfig() Config {
@@ -67,6 +70,7 @@ func defaultConfig() Config {
 		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
 		DiscoverEntriesPerSecond: 500, MaxFiles: 150000, MaxDirectories: 20000, MaxRegions: 8192, MaxOperationsPerSecond: 1000,
 		MaxCPUPercent: 5, MaxRSSBytes: 128 * MiB, MaxReappearanceRatio: 0.25, RecheckSeconds: 5, WorkerBudgetMS: 25,
+		AccessHints: true, MaxWatches: 1024, MaxHintFiles: 2048,
 	}
 }
 
@@ -133,6 +137,9 @@ func (c Config) validate() error {
 	}
 	if c.MaxFiles < 1 || c.MaxFiles > 1000000 || c.MaxDirectories < 1 || c.MaxDirectories > 100000 || c.MaxRegions < 1 || c.MaxRegions > 1000000 || c.MaxOperationsPerSecond < 1 || c.MaxOperationsPerSecond > 100000 || c.DiscoverEntriesPerSecond < 1 || c.DiscoverEntriesPerSecond > 100000 || c.MaxRSSBytes < 16*MiB {
 		return errors.New("索引/操作/内存预算超出有效范围")
+	}
+	if c.MaxWatches < 1 || c.MaxWatches > 16384 || c.MaxHintFiles < 1 || c.MaxHintFiles > 100000 {
+		return errors.New("max_watches范围1..16384，max_hint_files范围1..100000")
 	}
 	for _, p := range append(append(append([]string{}, c.Paths...), c.AutoRoots...), c.ExcludePaths...) {
 		if !filepath.IsAbs(p) || filepath.Clean(p) != p {

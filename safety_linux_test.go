@@ -223,3 +223,39 @@ func TestTokenBucketNoBurstAccumulation(t *testing.T) {
 		t.Fatal(b)
 	}
 }
+
+func TestAccessHintsDoNotObserveTheirOwnScan(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "data")
+	if err := os.WriteFile(p, make([]byte, 65536), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := defaultConfig()
+	e := newEngine(c, []string{d})
+	defer e.close()
+	e.add(d, 0)
+	e.add(p, 0)
+	if e.hints == nil || e.hints.fd < 0 {
+		t.Skip("inotify unavailable")
+	}
+	f, err := safeOpen(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resident(f, 0, 65536)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.hints.poll(e, time.Now())
+	if e.hints.events != 0 {
+		t.Fatal("own scan triggered access hints", e.hints.events)
+	}
+	if _, err = os.ReadFile(p); err != nil {
+		t.Fatal(err)
+	}
+	e.hints.poll(e, time.Now())
+	if e.hints.files[p] == nil || e.hints.events == 0 {
+		t.Fatal("real read not observed")
+	}
+}
