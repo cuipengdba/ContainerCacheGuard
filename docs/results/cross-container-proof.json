@@ -1,0 +1,9 @@
+{
+  "same_device_inode_uid": true,
+  "source_file_readonly_mount": true,
+  "same_uid": true,
+  "db_and_guard_separate_containers": true,
+  "method": "stat in both containers and OCI mount specification",
+  "runtime": "containerd",
+  "kubernetes": false
+}

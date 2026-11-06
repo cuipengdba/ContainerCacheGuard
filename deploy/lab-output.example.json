@@ -1,0 +1,26 @@
+{
+  "mode": "paths",
+  "action": "observe",
+  "cache_target_bytes": 536870912,
+  "warmup_seconds": 5,
+  "protect_seconds": 2,
+  "min_file_age_seconds": 2,
+  "scan_bytes_per_second": 2147483648,
+  "initial_reclaim_bytes_per_second": 201326592,
+  "reclaim_bytes_per_second": 268435456,
+  "worker_budget_ms": 200,
+  "max_cpu_percent": 40,
+  "max_dirty_bytes": 2147483648,
+  "max_io_psi_avg10": 0,
+  "max_operations_per_second": 8000,
+  "discover_entries_per_second": 4000,
+  "rescan_seconds": 30,
+  "log_interval_seconds": 5,
+  "paths": [
+    "/backup"
+  ],
+  "state_file": "/tmp/ccg-output/status.json",
+  "critical_mode": "bounded",
+  "cooldown_seconds": 5,
+  "recheck_seconds": 2
+}

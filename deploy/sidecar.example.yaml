@@ -17,6 +17,8 @@ spec:
     - name: cacheguard
       image: YOUR_CCG_IMAGE
       args: ["run", "--config", "/config/ccg.json"]
+      # 下面是默认低预算的结构示意。高吞吐输出实验约需单核20%的工作预算，
+      # 不能照抄200m硬限额后期待同样吞吐；要按实测为运行时开销留余量。
       resources:
         requests: {cpu: 25m, memory: 64Mi}
         limits: {cpu: 200m, memory: 192Mi}

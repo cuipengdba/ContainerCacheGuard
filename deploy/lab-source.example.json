@@ -1,0 +1,23 @@
+{
+  "mode": "paths",
+  "action": "observe",
+  "cache_target_bytes": 1073741824,
+  "warmup_seconds": 5,
+  "protect_seconds": 5,
+  "min_file_age_seconds": 5,
+  "scan_bytes_per_second": 1073741824,
+  "initial_reclaim_bytes_per_second": 134217728,
+  "reclaim_bytes_per_second": 167772160,
+  "worker_budget_ms": 100,
+  "max_cpu_percent": 25,
+  "max_dirty_bytes": 536870912,
+  "max_io_psi_avg10": 0,
+  "max_operations_per_second": 4000,
+  "discover_entries_per_second": 4000,
+  "rescan_seconds": 30,
+  "log_interval_seconds": 5,
+  "paths": [
+    "/pgdata/base"
+  ],
+  "state_file": "/tmp/ccg-source/status.json"
+}
