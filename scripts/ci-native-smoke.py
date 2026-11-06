@@ -60,7 +60,7 @@ try:
     source = work / 'postgresql-18.6'
     pg = work / 'server'
     run(['./configure', '--prefix=' + str(pg), '--without-readline', '--without-icu',
-         '--without-zlib', '--without-lz4', '--without-zstd', '--without-ssl',
+         '--without-zlib', '--without-lz4', '--without-zstd',
          '--without-libxml', '--without-libxslt', '--disable-nls'], cwd=source)
     run(['make', '-j2'], cwd=source)
     run(['make', 'install'], cwd=source)
