@@ -251,6 +251,11 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	if now.Before(r.Due) || now.Before(r.Until) {
 		return
 	}
+	// Do not spend the sampling budget repeatedly on a candidate that cannot
+	// receive advice this tick. Post-advice checks still run while paused.
+	if !r.Check && (!allow.Load() || now.Before(e.cooldown) || e.advice.tokens < float64(r.Length)) {
+		return
+	}
 	if !e.ops.take(1) || !e.scan.take(float64(r.Length)) {
 		return
 	}
@@ -370,14 +375,13 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		e.nextIncrease = now.Add(30 * time.Second)
 	}
 	e.advice.refill(now, float64(e.rate), float64(e.rate))
-	e.discover(now, now.Add(time.Duration(slice/5*float64(time.Second))))
+	e.discover(now, now.Add(time.Duration(slice*0.15*float64(time.Second))))
 	if e.hints != nil {
 		e.hints.poll(e, now)
-		e.hints.sample(e, now, now.Add(time.Duration(slice/2*float64(time.Second))))
 	}
 	// Due regions are revisited independently of full-directory coverage.
 	count := len(e.queue)
-	for i := 0; i < count && time.Now().Before(deadline.Add(-time.Duration(slice/5*float64(time.Second)))); i++ {
+	for i := 0; i < count && time.Now().Before(now.Add(time.Duration(slice*0.70*float64(time.Second)))); i++ {
 		if len(e.queue) == 0 {
 			break
 		}
@@ -397,6 +401,9 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			break
 		}
 		e.inspect(r, now, allow)
+	}
+	if e.hints != nil {
+		e.hints.sample(e, now, now.Add(time.Duration(slice*0.90*float64(time.Second))))
 	}
 	for len(e.files) > 0 && time.Now().Before(deadline) && ctx.Err() == nil {
 		if !e.ops.take(1) {
