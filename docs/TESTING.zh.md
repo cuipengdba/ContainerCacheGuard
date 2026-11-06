@@ -58,7 +58,7 @@ pressure-r6 八相已完成：off/observe峰值约4099MiB，paths两次约421/42
 
 | 项目 | 状态 | 需要的证据 |
 | --- | --- | --- |
-| 原生 amd64/arm64 新程序 CI | 0.2.0-rc.1 已逐项核验通过 | [CI 42271221664](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/42271221664)：两架构原生 unit/race/CLI 及静态ELF；发布附件服务端 SHA256 与本地一致 |
+| 原生 amd64/arm64 新程序 CI | 0.2.0-rc.2 已逐项核验通过 | [CI 42278872066](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/42278872066)：两架构原生 unit/race/CLI 及静态ELF；发布附件服务端 SHA256 与本地一致 |
 | CLI pause/resume、状态锁及排除保护 | 已通过 | Linux5.14实机和原生两架构CI，前后计数/内容/排除驻留 |
 | auto enforce 与 paths enforce 压力 | 4GiB子集八相完成 | 相同数据、速率、起始缓存，反馈和资源成本 |
 | 真实规模全量基线/治理对照 | 完成；源端目标达到，输出未达 | 完整备份和原生校验均通过，详细数字见最终汇总 |
