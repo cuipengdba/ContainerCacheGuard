@@ -34,7 +34,7 @@
 | `read_window_bytes` | 8 MiB；0 或 4096 B～64 MiB | 校验/合并等文件读取的批处理窗口。0 保留逐读处理的开发对照方式。 | 不建议生产直接使用 0；逐小块释放可能破坏顺序 IO 效率。 |
 | `rate_burst_bytes` | 1 MiB；0～64 MiB | 限速器允许累积的有限短时信用，减少每次小读都等待的成本。 | 数值增大可能提高短时突发；0 不累计信用，但仍不是每个采样瞬间物理 IO 绝对平坦。 |
 | `bitmap_budget_bytes` | 256 MiB；1 MiB～1 GiB | 源文件驻留位图及估算元数据预算。文件多或数据量大时需评估。 | 超预算会拒绝/停止，不会无限增加内存。该预算不是整个程序 RSS 的硬上限。 |
-| `cache_policy` | `preserve-hot` | 推荐模式：同时处理普通目录备份的源端和目的端，保护开始前的驻留页。 | 当前要求本机真实 PGDATA、相同 UID、默认表空间、plain/client 输出和默认 WAL 位置。 |
+| `cache_policy` | `preserve-hot` | 推荐模式：同时处理普通目录备份的源端和目的端，保护开始前的驻留页。 | 当前要求本机真实 PGDATA、可准确执行 mincore 的身份权限（优先相同 UID；受限 root 例外见设计说明）、默认表空间、plain/client 输出和默认 WAL 位置。 |
 | `cache_policy=destination-only` | 显式选择 | 只处理客户端受控文件读写的缓存，适用于某些 tar/压缩或其他原生参数场景。 | 不释放服务端 PGDATA。server target 的写入也发生在服务端，不能声称客户端已控制那些写入。 |
 | `cache_policy=off` | 显式选择 | 保留限速与监控，关闭缓存建议，用于建立对照基线。 | 缓存可能正常积累；这不是推荐的缓存治理设置。 |
 | `process_max` | `1`；1～16 | 研究用 pgBackRest 后端并发。 | PG18 原生 pg_basebackup 不使用这个参数增加或减少数据复制并发，不能将其宣传为原生并发控制。 |

@@ -18,12 +18,15 @@ Linux 的 `POSIX_FADV_DONTNEED` 是建议接口。它不能保证立即清除脏
 - [配置参数](docs/CONFIGURATION.zh.md)：每个配置项的单位、默认值、选择方法和限制。
 - [PG18 备份参数](docs/PG18-OPTIONS.zh.md)：全部原生参数索引及缓存控制的适用范围。
 - [从源码构建](docs/BUILD.zh.md)：上游源码、静态工具链、离线构建与实际验证范围。
+- [容器部署与接入](docs/DEPLOYMENT.zh.md)：同 Pod/独立 Job 的选择、挂载、UID、安全策略、监控和回退。
 
 ## 交付形式
 
 目标交付为 Linux amd64 和 arm64 的自包含单文件。程序内置相应架构的静态 `pg_basebackup`、`pg_verifybackup`、`pg_combinebackup`、`pg_waldump` 和 `psql`，运行备份无需另行安装 PG18 客户端。
 
 单文件运行时会在受控目录展开客户端，用完删除；目录需要允许执行，且应有约 40 MiB 空间。静态编译仍依赖 Linux 内核、文件系统、挂载权限和配置；它不意味着可以在 Windows 运行 Linux 备份，也不意味着包含数据库服务端及 PostGIS、Timescale、Citus 等服务端扩展。
+
+当前守护客户端使用 `pidfd_open` 核对控制器是否仍存活，要求内核提供该接口（Linux 5.3 起提供），容器安全策略也需允许。CentOS 7 容器可共享较新宿主机内核；仅凭容器发行版不能判断是否可用。接口被禁用或缺失时会拒绝受控 IO，不会静默降成没有控制器存活检查的模式。
 
 当前静态客户端构建启用 OpenSSL、gzip、lz4 和 zstd，未启用 GSSAPI、LDAP 和 OAuth/libcurl。复制连接的身份核对目前要求共享的本机 Unix Socket，并核对实际服务端的系统标识与所挂 PGDATA；任意远端数据库不在当前源端缓存控制范围内。
 
