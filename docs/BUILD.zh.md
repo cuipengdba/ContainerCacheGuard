@@ -1,53 +1,40 @@
-# 怎样从源码构建
+# 构建与发布
 
-建议在专用构建机完成，运行备份的服务器直接使用 Release 二进制。构建会下载上游源码、校验 SHA256，并生成私有 musl、压缩库、OpenSSL 和五个 PG18 客户端，不安装到宿主机的 `/usr`。
+产品只使用 Go 标准库，没有 CGO、动态库和外部备份客户端依赖。支持 Linux amd64/arm64；Windows 可以交叉编译，但程序不在 Windows 上运行缓存治理。
 
-## 环境
+## 构建
 
-当前原生构建入口面向 Linux x86_64 或 aarch64。需要 Python 3.9 以上、Go 1.24 以上、GCC、make、binutils/readelf、Perl 完整构建模块、bison、flex、pkg-config、Linux 开发头文件以及下载权限。构建根目录至少留出 3 GiB，首次构建会花较长时间。
-
-例如可在专用 Debian/Ubuntu 构建机安装 `build-essential binutils perl bison flex pkg-config linux-libc-dev python3`；Go 单独按官方发行包安装。这个安装示例不是要求在生产数据库宿主机安装开发工具。
+Go 1.24 或更高，当前构建和 CI 使用 1.27.3。Python 仅用于可选构建辅助脚本和验收，不是产品运行依赖。
 
 ```sh
-python3 scripts/build-release.py --build-root /var/tmp/pgcacheguard-build-amd64
+python3 scripts/build.py --version 0.1.0-rc.1 --commit "$(git rev-parse --short HEAD)"
+# 或直接使用 Go：
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o containercacheguard .
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o containercacheguard-arm64 .
 ```
 
-在 ARM64 Linux 构建机上运行相同命令，选择一个新的构建根目录，即生成 ARM64 产物。这个入口按本机架构构建，不负责模拟另一种架构。
+输出目录 dist 包含双架构二进制和 SHA256SUMS。使用 `file` 和 `readelf` 验证无 INTERP/NEEDED，不能仅凭 CGO_ENABLED=0 就省略交付检查。
 
-上游下载地址和 SHA256 固定在 `scripts/sources.json`。已有离线源包时：
+## 测试
 
 ```sh
-python3 scripts/build-release.py \
-  --build-root /var/tmp/pgcacheguard-build-offline \
-  --source-cache /srv/upstream-source-cache --offline
+go vet ./...
+go test -race -count=1 -v ./...
+python3 scripts/integration.py ./dist/containercacheguard-linux-amd64 --output integration-results.json
 ```
 
-离线目录放原始归档文件，文件名需与清单一致。缺失或 SHA256 不一致会失败。构建根目录必须为空，失败目录保留排查，脚本不会递归删除旧目录。下载代理使用标准 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量，不要把认证信息写进源码。
+race 测试需要本机可用的 C 工具链；这不改变最终静态程序的依赖。Linux 文件机制测试需支持的真实磁盘文件系统；tmpfs 不作为支持目标。集成测试只在临时目录造文件，不修改 cgroup 限额、不全机清缓存。持续压力、真实数据、Kubernetes/OpenShift 验收另见测试报告。
 
-## 产物与检查
+CI 在原生 x86_64 和 ARM64 runner 执行，不能以交叉编译成功代替原生执行；页大小随 runner 记录，4KiB 的 ARM64 结果不能证明64KiB内核已通过。
 
-- `dist/pgcacheguard-linux-amd64` 或 `dist/pgcacheguard-linux-arm64`：单文件程序。
-- 同名 `.sha256`：校验和。
-- `dist/native-build-架构.json`：五个原生客户端的版本、静态检查和 SHA256。
-
-工具链和 Go 程序都会检查没有 ELF `INTERP` 和动态 `NEEDED`。这证明没有动态用户态库依赖，不代表文件系统权限、内核版本或容器安全策略已经通过验收。
+## 容器镜像
 
 ```sh
-go test ./...
-readelf -l dist/pgcacheguard-linux-amd64
-readelf -d dist/pgcacheguard-linux-amd64
-dist/pgcacheguard-linux-amd64 basebackup --version
-dist/pgcacheguard-linux-amd64 basebackup --help
+docker build --build-arg TARGETARCH=amd64 -t containercacheguard:local .
 ```
 
-Go 编译前必须先生成对应架构的内嵌客户端资源，所以全新源码不能跳过工具链构建直接运行 `go build`。源码可复建不等于不同时间、路径和 Go 版本生成的二进制逐字节相同；当前未承诺可重复构建的字节级一致性。
+scratch 镜像仅含程序，默认显示帮助。运行时挂载配置、数据和可写状态目录，指定实际 UID。Dockerfile 不包含 shell，因此不要用 shell 命令作为容器启动参数。
 
-已完成的 amd64 实验构建和 ARM64 交叉构建有独立证据。这里新增的通用构建入口还需要在干净构建机回归；不能把既有私有目录构建成功当作所有发行版都已通过。
+## 发布规则
 
-## GitHub 上的双架构原生验证
-
-仓库的 `Native static build and recovery smoke` 工作流分别使用 `ubuntu-24.04` 和 `ubuntu-24.04-arm`。GitHub 的[运行器说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)列出这两个架构；ARM 任务在 ARM CPU 上运行，不依靠本项目的 QEMU 配置。工作流记录实际架构和系统页大小，不能把普通 ARM 机器通过写成真实 64 KiB 页内核也通过。
-
-每个任务从固定 SHA256 的上游源码构建静态工具，运行 Go 测试，再独立构建一个 PG18 源数据库，测试全量、连续两代增量、三份合并结果的实际启动与数据核对，以及缺父链、已有目标和损坏拒绝。测试数据是临时生成的小数据；它补充双架构兼容性证据，不能代替迁移真实数据上的性能、缓存或 Kubernetes 驱逐验收。
-
-Actions 中保留二进制、SHA256、客户端构建报告、环境和测试日志 30 天。构建产物不自动标成正式 Release。判断是否通过应查看对应提交的工作流结果，不能仅凭存在工作流文件。源码 checkout 不持久化凭据，工作流只申请仓库读取权限。
+每个版本附源码标签、双架构二进制、SHA256SUMS、中文发行说明以及当前实测范围。候选版不标成生产通用保证。公开仓库只包含通用源代码、文档及去敏汇总，不包含业务数据、连接信息、代理认证、内部 DBS 源码和原始表名。

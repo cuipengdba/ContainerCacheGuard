@@ -1,97 +1,101 @@
-# 配置参数：先确定预算，再开始备份
+# 命令与配置：先知道每个参数控制什么
 
-配置采用 JSON，示例见 [config.example.json](../config.example.json)。不支持注释或多份 JSON 拼接；未知字段会报错，避免拼错参数后悄悄使用默认值。路径按 Linux 绝对路径配置。
+配置格式为 JSON，UTF-8；未知字段会报错，避免拼写错误后静默采用默认值。以 `init-config` 输出为默认值的可执行依据。参数中的“字节”不是 MB 字符串：1 MiB = 1048576 字节，1 GiB = 1073741824 字节。
 
-以下默认值来自当前开发版。没有默认安全值的项目必须按节点容量、业务基线和演练结果填写。单位中的 MiB 是 1,048,576 字节；JSON 里写整数，例如 20 MiB/s 写 `20971520`，不能写字符串 `"20M"`。
+## 命令
 
-## 数据库、目录和连接
-
-| 参数 | 默认值 | 怎样选择与使用 | 前提和边界 |
-| --- | --- | --- | --- |
-| `backend` | `native` | 正式路线使用 `native`，调度内置 PG18 原生工具。 | 代码保留了研究阶段的 `pgbackrest` 后端，但它依赖外部工具，不能视为已交付的自包含路线。 |
-| `pgdata` | 必填 | 数据库实际 PGDATA 在备份容器中的只读挂载路径，如 `/database/pgdata`。 | 必须确实是正在备份的实例；PG_VERSION 为 18，实际连接的系统标识须相同。 |
-| `repository` | 必填 | 本机备份仓库根目录，如 `/backup/pg18`。每次 `-D` 使用其下面一个独立目录。 | 不能与 PGDATA 或运行目录重叠。原生备份输入/父清单应在仓库内，避免误读其他数据。 |
-| `runtime_dir` | 必填 | 保存任务结果、控制状态和临时展开客户端，如 `/run/pgcacheguard`。 | 与数据和仓库分开；需要写入和执行权限。tmpfs 会计入内存，不能忽略展开客户端的占用。 |
-| `pg_host` | 应显式填写 | 共享 Unix Socket 目录，如 `/database/socket`。 | 当前实际复制连接必须使用这个路径；TCP 或另一个 Socket 路径会被身份检查拒绝。 |
-| `pg_port` | `5432` | 数据库实际端口，范围 1～65535；Unix Socket 文件名也包含端口。 | 两个容器共享网络不代表共享 Socket 文件，仍要挂载相同 Socket 目录。 |
-| `pg_user` | `postgres` | 备份连接账号。可使用有 LOGIN、REPLICATION 权限且通过认证的专用角色。 | 内置备份入口通过复制协议核对实例，不要求为这一项额外授予数据库超级用户。 |
-| `pg_check_user` | 空，使用 `pg_user` | `doctor` 的 SQL 检查账号。需要能读取版本及数据目录设置。 | 可单独配置诊断账号，避免把超级用户作为备份账号。 |
-| `pg_database` | `postgres` | `doctor` SQL 连接的数据库名。 | 原生 `-d` 是 libpq 连接字符串，与这里的诊断数据库选择不是同一层参数。 |
-| `pg_basebackup` | 空，使用内置 | 通常不要填写。仅在开发对照中指定受支持的外部实际工具路径。 | 外部动态工具需要兼容 IO 适配与加载条件；普通未适配工具可能被握手检查拒绝。 |
-| `pg_verifybackup` | 空，使用内置 | 通常不要填写。 | 内置工具同目录包含 `pg_waldump`，用于实际 WAL 验证。 |
-| `pg_combinebackup` | 空，使用内置 | 通常不要填写。 | 合并是增量恢复的一部分，不等同于启动数据库或切换业务。 |
-| `psql` | 空，使用内置 | `doctor` 使用的 SQL 客户端。 | 自包含交付中无需安装系统 psql。 |
-
-路径不接受冒号、换行或 NUL；仓库根目录本身不能直接作为某次备份输出。非空输出目录会被拒绝，空目录可以使用。不同的目录名称不能证明不同底层磁盘，需要另查设备和挂载关系。
-
-## 带宽、窗口和缓存策略
-
-| 参数 | 默认值 / 范围 | 怎样选择与使用 | 代价和边界 |
-| --- | --- | --- | --- |
-| `read_bytes_per_second` | 必填；32 KiB/s～1 TiB/s | 逻辑读与接收速率上限。原生备份还会把它与写上限、用户 `-r` 取最小值，且遵守原生最高 1 GiB/s。 | 不直接等于块设备实际带宽；预读、WAL、检查点和业务 IO 仍需分别观测。 |
-| `write_bytes_per_second` | 必填；32 KiB/s～1 TiB/s | 本任务受控输出的逻辑写上限。通常与读上限相同，先用保守值测量。 | 同盘读取和写入共同消耗设备能力；不能各填“磁盘标称速度”后认为仍有业务余量。 |
-| `flush_bytes` | 8 MiB；4096 B～64 MiB | 输出累计完成多少字节后写回并建议释放。 | 太小可能增加同步、系统调用和 IOPS；太大提高瞬时脏页与缓存峰值。建议从 8 MiB 开始做公平对照。 |
-| `read_window_bytes` | 8 MiB；0 或 4096 B～64 MiB | 校验/合并等文件读取的批处理窗口。0 保留逐读处理的开发对照方式。 | 不建议生产直接使用 0；逐小块释放可能破坏顺序 IO 效率。 |
-| `rate_burst_bytes` | 1 MiB；0～64 MiB | 限速器允许累积的有限短时信用，减少每次小读都等待的成本。 | 数值增大可能提高短时突发；0 不累计信用，但仍不是每个采样瞬间物理 IO 绝对平坦。 |
-| `bitmap_budget_bytes` | 256 MiB；1 MiB～1 GiB | 源文件驻留位图及估算元数据预算。文件多或数据量大时需评估。 | 超预算会拒绝/停止，不会无限增加内存。该预算不是整个程序 RSS 的硬上限。 |
-| `cache_policy` | `preserve-hot` | 推荐模式：同时处理普通目录备份的源端和目的端，保护开始前的驻留页。 | 当前要求本机真实 PGDATA、可准确执行 mincore 的身份权限（优先相同 UID；受限 root 例外见设计说明）、默认表空间、plain/client 输出和默认 WAL 位置。 |
-| `cache_policy=destination-only` | 显式选择 | 只处理客户端受控文件读写的缓存，适用于某些 tar/压缩或其他原生参数场景。 | 不释放服务端 PGDATA。server target 的写入也发生在服务端，不能声称客户端已控制那些写入。 |
-| `cache_policy=off` | 显式选择 | 保留限速与监控，关闭缓存建议，用于建立对照基线。 | 缓存可能正常积累；这不是推荐的缓存治理设置。 |
-| `process_max` | `1`；1～16 | 研究用 pgBackRest 后端并发。 | PG18 原生 pg_basebackup 不使用这个参数增加或减少数据复制并发，不能将其宣传为原生并发控制。 |
-
-例如 1.5 TB 在 24 小时内，仅一次数据传输就需要约 17.4 MB/s；如果按 1.5 TiB 计算约 18.2 MiB/s。还要留出检查点、WAL、校验、暂停及业务资源余量。同盘完成一次备份至少涉及源读取和目的写入，完整校验又会额外读取。正式限速应由实际总耗时与业务延迟共同确定，不能只套这个理论下限。
-
-**当前复制后串行执行完整校验，不能按一次传输估算总窗口。** 1.5 TiB 在复制与校验都限 20 MiB/s 时，两次读取的理想时间约 43.7 小时；在 24 小时内完成的理想平均读速率至少约 36.4 MiB/s，实际还需余量。详见 [恢复与时间预算](RECOVERY.zh.md)。业务不能提供这一预算时，应调整全量/增量周期或隔离架构，不能把示例限速当成已满足时长。
-
-## 节点和容器内存预算
-
-| 参数 | 默认值 / 范围 | 怎样选择与使用 | 触发行为 |
-| --- | --- | --- | --- |
-| `min_node_available_bytes` | `0`，关闭该项 | 节点必须保留的可用内存停止线。应高于 kubelet 驱逐阈值，并加上采样延迟及业务突发余量。 | 低于该值拒绝开始或停止本次任务。至少配置这项或一个 cgroup 预算。 |
-| `warn_node_available_bytes` | `0` | 节点警戒线，不小于停止线。留出足够降速反应时间。 | 低于该值，将当前任务配置读写上限减半；回到正常范围后恢复。当前不是逐次指数减半。 |
-| `cgroups` | 空数组 | 列出数据库、备份工具及关键同机服务的 cgroup v2 路径与预算。路径应为容器内可读的真实层级。 | 路径丢失、字段不完整等监控错误会停止，而不是静默跳过。 |
-| `cgroups[].path` | 每项必填 | 例：只读挂载宿主机 cgroup 后的 `/host-cgroup/.../database`。 | Pod 重建后路径可能变化，应由部署层正确发现/更新；不要硬编码已经失效的容器 ID。 |
-| `cgroups[].max_working_set_bytes` | `0`，关闭该子项 | 为该 cgroup 设置工作集停止预算。当前计算为 `memory.current - inactive_file`，最低为 0。 | 达到或超过预算停止；不能把 shmem 一并从工作集中扣掉。 |
-| `cgroups[].max_active_file_bytes` | `0`，关闭该子项 | 对同事观察到的 active_file 快速增长设置额外停止预算。 | 达到或超过预算停止。每个 cgroup 至少启用一个预算。 |
-
-不建议凭空给出生产阈值。先记录正常业务、同步、备份和重叠时的峰值，再确定“业务正常峰值 + 缓冲量”与“节点危险线”之间是否还有可运行空间。若没有空间，应改调度、容量或隔离架构，不能靠无限降低停止线让任务硬跑。
-
-这些预算是工具的监控与取消条件，不会自动修改宿主机的 `memory.high`、`memory.max`、`memory.min/low` 或 `io.max`。也不会把整个数据库容器拖入强制回收来实现“缓存上限”。
-
-## 使用哪个节点指标
-
-| 参数 | 默认值 / 范围 | 用法和要求 |
+| 命令 | 作用 | 是否释放缓存 |
 | --- | --- | --- |
-| `require_kubelet_stats` | `false` | 真实集群建议设为 `true`，要求使用 kubelet 口径的节点可用内存。没有有效数据就停止。 |
-| `kubelet_summary_file` | 空 | 外部只读采集器提供的 Summary JSON 文件。采集器应先写临时文件，再原子替换。 |
-| `kubelet_summary_url` | 空 | 可验证 HTTPS 的 kubelet Summary 地址，如集群授权路径；不能与文件来源同时配置。 |
-| `kubelet_ca_file` | 空，使用系统根证书 | 指定校验 kubelet HTTPS 证书的 CA。不会关闭证书验证。 |
-| `kubelet_token_file` | 空 | 读取访问 kubelet 的令牌文件，配合最小必要 RBAC；不把令牌写在命令行或日志里。 |
-| `stats_max_age_seconds` | `15`；1～300 秒 | Summary 内指标时间允许的最大陈旧程度。应结合采集周期选择。 |
+| `help`、`--help` | 使用说明 | 否 |
+| `version` | 版本、构建提交、架构 | 否 |
+| `init-config --mode auto或paths` | 将完整默认 JSON 输出到标准输出 | 否 |
+| `doctor --config 文件` | 检查实际目录、内核页大小、UID、cgroup 指标 | 否 |
+| `run --config 文件` | 前台常驻，输出限频 JSON 日志和状态文件 | 只有 enforce 且策略允许 |
+| `status --config 文件` | 读取状态，过期时返回非零 | 否 |
+| `scan --path 目录` | 一次完整只读驻留扫描，独立测量当前覆盖范围 | 否，但遍历与查询有成本 |
 
-未要求 kubelet 且未提供 Summary 时，实验可退回宿主 `/proc/meminfo` 的 `MemAvailable`。这个口径与 kubelet 的 `memory.available` 不相同，结果会标出来源；不能用该实验替代集群驱逐验收。
+通用选项：`--config`、`--mode auto|paths`、`--action observe|enforce`、可重复的 `--path`、`--cgroup-path`、`--state-file`、`--cache-target-bytes`、`--reclaim-bytes-per-second`、`--scan-bytes-per-second`、`--duration 30s/5m/2h`。未指定 duration 则持续运行。命令行覆盖 JSON 同名设置；`--path` 默认选择 paths 模式，与显式 auto 冲突时会报错。
 
-## 调度、取消和运行时
+`scan` 可能需要数分钟完整覆盖大目录，不应放进每秒监控循环。其输出 `Complete=false` 或非零退出码不能当成完整结果。源码中 scan 的大小写字段保留 `Files/Bytes/Resident/Errors/Complete/Seconds`；daemon 状态字段为 snake_case。
 
-| 参数 | 默认值 / 范围 | 怎样选 |
+## 范围和动作
+
+| JSON 参数 | 默认值 | 人话说明 |
 | --- | --- | --- |
-| `lock_files` | 必填非空数组 | 各备份/同步任务约定共用的设备锁文件。工具使用 flock，按路径排序获取，避免不同顺序死锁。只有其他任务也遵守同一个锁，才能防止与其重叠。 |
-| `lock_wait_seconds` | `0`；0～86400 秒 | 0 表示锁忙立即失败。需要排队时设置等待期限，并让 DBS 识别超时。 |
-| `poll_ms` | `1000`；100～10000 毫秒 | 内存采样周期。越小反应越快，也增加采集开销。日志会另外限频，不能用日志间隔推断采样间隔。 |
-| `deadline_seconds` | `86400`；1～604800 秒 | 整个任务的最长运行时间，包括准备、复制、校验或合并阶段。24 小时备份窗口可据此设定，但应预留失败后的调度余量。 |
-| `grace_seconds` | `30`；1～120 秒 | 取消后先终止自己的任务组，超过宽限期再强制结束。不会终止数据库服务端或其他业务进程。 |
-| `allow_stopped_pgdata_restore` | `false` | 兼容现有 DBS 的 `pg_combinebackup -o PGDATA`。显式启用后，仍要求 PGDATA 缺失/为空、无 postmaster.pid、数据库 Socket 不接受连接；先在相邻新目录合并和完整校验，再用禁止覆盖的原子改名发布。它不会自动停库或覆盖已有数据。 |
+| `mode` | `auto` | 自动发现范围，或 `paths` 指定范围 |
+| `action` | `observe` | 观察不动缓存；`enforce` 才可以回收 |
+| `paths` | `[]` | paths 模式的一组绝对路径。支持目录或普通文件，禁止根目录及系统目录；不跟随符号链接 |
+| `auto_roots` | `[]` | auto 模式额外登记的目录，不取代自动发现；要严格限定范围请使用 paths |
+| `exclude_paths` | `[]` | 排除路径及其子树；优先于发现与包含规则 |
+| `exclude_names` | 见生成配置 | 按每级目录/文件的完整名字排除。默认含 WAL、global、事务/复制/共享内存相关 PG 目录；自定义数组会替换默认数组 |
+| `cgroup_path` | 自动检测 | 本容器 memory cgroup；sidecar 应显式指定业务容器的只读挂载路径。必须是真实 cgroup 文件系统 |
+| `state_file` | `/tmp/containercacheguard/status.json` | 状态输出和同名 `.lock` 文件；父目录必须属于当前 UID，权限 0700。不同受控范围使用不同目录 |
 
-启用直接 PGDATA 恢复时，应挂载 PGDATA 的父目录并允许原子改名；如果 PGDATA 本身是卷挂载点，发布可能失败并保留已经验证的 staging 副本，需按操作手册处理。恢复文件的所有者是工具执行用户，启动数据库前需要满足实际数据库 UID/权限要求。是否已停业务仍由运维流程保证，目录和 Socket 检查不能替代服务编排层的停库确认。
+自动发现磁盘类型的挂载点（ext4/xfs/btrfs/overlay/f2fs），以及 `/data`、`/backup`、`/backups`、`/pgdata`、`/var/lib/postgresql`、`/var/lib/mysql`、`/app/data`、`/opt/data` 和 `PGDATA`。过滤系统目录、被排除路径、符号链接和不支持文件系统。自动模式不保证找到任意应用所有缓存文件；容器内部特殊路径可以通过 auto_roots 补充。可执行文件、共享库、静态库、非普通文件、短于一页的文件跳过。
 
-运行目录保留失败收据和部分产物的状态。原生是否清理失败输出仍遵守 `--no-clean` 等参数及上游行为；不要把残留目录直接当成成功备份。工具不会自动删除最后一份已验证备份，也不自动执行保留策略清理。
+父目录遍历不会跨到不同设备的嵌套挂载。自动发现可独立登记受支持挂载；paths 模式需要单独写出嵌套挂载路径。同设备的父子范围合并，不同设备分别登记。
 
-## 研究阶段遗留字段
+## 什么时候回收，什么时候停
 
-`stanza`、`pgbackrest`、`pgbackrest_config` 只供早期对照后端使用；正式原生配置无需填写。`stanza` 仅允许受限字母数字名称；另外两项为外部可执行文件和配置绝对路径。它们不表示本工具已经把 pgBackRest 全功能静态打包。
+| JSON 参数 | 默认值 | 含义与调整影响 |
+| --- | --- | --- |
+| `cache_target_bytes` | `0` | 普通文件缓存的软目标，使用 `max(0,file-shmem)` 近似。0 表示从内存限额乘下面比例推导；不是硬上限 |
+| `cache_target_ratio` | `0.25` | 有限 memory.max 的 25% 为缓存软目标。没有可见有限限额时，budget/pressure 模式必须显式配置字节目标 |
+| `trigger` | `budget` | 文件缓存超过目标就允许试探；`pressure` 还要求内存用量超过 high 比例；`always` 为显式持续治理，仍受全部保护约束 |
+| `memory_high_ratio` | `0.85` | pressure 触发模式的用量比例；不修改 memory.high |
+| `memory_critical_ratio` | `0.95` | 达到可见限额95%时停止推测性回收并报告 CRITICAL，避免临界时制造更多读写；不是 OOM 保护保证 |
+| `max_dirty_bytes` | `134217728`（128MiB） | dirty+writeback 超过此值暂停回收。0 表示只允许该统计为0；不代表每个目标页严格干净 |
+| `max_io_bytes_per_second` | `0` | 目标 cgroup 累计 io.stat 推算的读写流量保护阈值，0禁用；配置非零而接口缺失时停止动作 |
+| `max_io_psi_avg10` | `10` | IO PSI some avg10 百分比超过10退让，0禁用；PSI 缺失显示 unknown，不伪装成0，但不会单独阻止全部运行 |
+| `min_node_available_bytes` | `0` | 可选宿主 `/proc/meminfo` MemAvailable 下限，0禁用。它不是 kubelet memory.available；未知或低于阈值时停止动作 |
+| `business_signal` | 空 | 可选业务信号 JSON 文件；配置后缺失/过期会停止动作。文件由监控系统写入，CCG 不执行外部命令 |
+| `signal_max_age_seconds` | `10` | 业务信号允许的最大年龄；未来超过1秒的时间也拒绝 |
+| `max_business_p99_ms` | `0` | 大于0时要求信号包含 p99_ms，超过就退让；0不按 p99 判断 |
 
-## 调用入口参数与环境变量
+业务信号例子（请写入真实当前时间并持续更新）：
 
-`-config /path/file.json` 指定配置，也可用 `PGCACHEGUARD_CONFIG`。为已有开发环境保留 `PG18GUARD_CONFIG` 别名；两者同时存在时优先使用正式名称。`-version/--version` 显示包装器版本，`basebackup --version` 显示内置 PG 版本。`--help` 显示包装器入口，`basebackup --help` 显示原生全部备份参数。
+```json
+{"time":"2026-11-06T10:00:00Z","p99_ms":12.5,"pause":false}
+```
 
-内部 `PG18GUARD_*` 和 `PGCACHEGUARD_EXPECT_*` 环境变量是受控进程通信协议，不是用户绕过配置的接口。包装器启动子工具前清理继承的注入配置，再按本次任务重新设置。
+同样负载下的生产阈值必须由测量确定。把所有保护阈值调得很宽，可以得到更大的回收数字，也可能掩盖业务损失；实验中调整的数值会单独记录。
+
+## 速度、保护时间和自身预算
+
+| JSON 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `interval_ms` | `1000` | cgroup/自监控及决策采样间隔，100..60000毫秒 |
+| `log_interval_seconds` | `10` | 输出一条状态 JSON 的间隔，避免每个文件刷日志 |
+| `warmup_seconds` | `60` | 启动学习期，不执行释放 |
+| `protect_seconds` | `30` | 首次观察到一个驻留范围后至少等待多久，不能把到期等同于证明冷页 |
+| `min_file_age_seconds` | `30` | 距离文件最后修改的最短时间；正在持续改写的文件会跳过 |
+| `cooldown_seconds` | `60` | 再次驻留或无效释放后的保护/冷却时间 |
+| `rescan_seconds` | `60` | 一轮发现结束后再次开始的最短周期；大目录会持续分批发现，不要求一分钟扫完 |
+| `scan_bytes_per_second` | `268435456`（256MiB/s） | 驻留查询覆盖范围预算，不是磁盘读取字节；包含释放前后复查 |
+| `reclaim_bytes_per_second` | `67108864`（64MiB/s） | 建议释放范围速率上限，允许最多约1秒额度突发 |
+| `initial_reclaim_bytes_per_second` | `4194304`（4MiB/s） | 起始速率；健康时每30秒增加这一档，发现代价或无效则降低 |
+| `region_bytes` | `4194304`（4MiB） | 单次文件范围；64KiB整数倍，64KiB..64MiB，适配4K/64K页大小；不会建议释放末尾不满页的部分 |
+| `discover_entries_per_second` | `500` | 新目录条目发现预算；限额后有滞后，状态不能解释成完整即时目录 |
+| `max_files` | `150000` | 文件索引上限，超出记录 inventory_overflow，不无限增内存 |
+| `max_directories` | `20000` | 待遍历目录队列上限 |
+| `max_regions` | `8192` | 候选、复查和保护区域记录上限；不是保存全库位图 |
+| `max_operations_per_second` | `1000` | 区域处理次数预算；一次区域处理可能涉及多个系统调用，不是精确 syscall 计数 |
+| `max_cpu_percent` | `5` | 自身进程上一个采样窗口超过单核5%时暂停工作；这是反馈保护，不是内核 CPU 硬限额 |
+| `max_rss_bytes` | `134217728`（128MiB） | 自身 RSS 超过该值暂停扫描；同时设置更低的 Go 内存软目标。不是进程硬内存上限 |
+| `worker_budget_ms` | `25` | 每秒工作时间预算；分最多5毫秒的小片执行。阻塞系统调用不能保证严格按时返回 |
+| `max_reappearance_ratio` | `0.25` | 释放后再次驻留量超过观察下降量25%时保护该范围，并降低回收速率 |
+| `recheck_seconds` | `5` | 计划在释放后5秒起复查；预算不足或内核阻塞时可能延迟 |
+
+扫描和回收速率不能小于一个 region；最大16GiB/s。要用1MiB/s建议速率，先把 region_bytes 和 initial_reclaim_bytes_per_second 都调小到不超过该值。参数校验失败会明确报错，不会偷偷忽略。
+
+## 看懂结果
+
+- `advice_bytes`：内核接受建议的文件范围累计字节，不等于已释放字节。
+- `observed_net_reduction_bytes`：建议前后观察到的驻留净下降，线上可能混入自然回收/并发访问，不作严格因果归因。
+- `observed_reappeared_bytes`：之后复查的驻留回升，可能是业务读取或预读，不是精确应用缺页数。
+- `sampled_resident_bytes_cumulative`：累计采样结果，重复采样会重复计数，**绝不能当成当前总缓存**。
+- `indexed_files`、`tracked_regions`、`inventory_overflow`：告诉你索引覆盖和预算是否不足。文件内容不会被守护进程读取来判断冷热。
+- `degraded`：例如 PSI 缺失、没有 kubelet Summary、其它缓存只诊断。未知不等于健康。
+- `worker_busy_seconds`：单工作队列执行延迟；超过5秒会停止派发新的建议，不启动替代工作线程制造堆积。
+
+状态目录包含进程号、路径及资源指标，默认只允许相同 UID 访问。每个状态文件有进程锁；它不能检测两个不同容器使用不同状态文件却管理同一个 inode 的情况，部署时必须保证同一范围只有一个治理者。

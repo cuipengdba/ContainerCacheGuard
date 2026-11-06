@@ -1,0 +1,43 @@
+# 配置模板，不可原样用于生产。替换镜像、UID、PVC、实际路径及目标 cgroup。
+# /target-cgroup 必须是数据库容器的实际 cgroup，而非 sidecar 自己的 cgroup。
+# 如果集群不允许此映射，优先在业务容器内由已有进程管理器运行 CCG。
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ccg-example
+spec:
+  securityContext:
+    runAsUser: 1000 # 必须与实际数据所有者和集群策略一致
+    runAsGroup: 1000
+  containers:
+    - name: business
+      image: YOUR_BUSINESS_IMAGE
+      volumeMounts:
+        - {name: data, mountPath: /data}
+    - name: cacheguard
+      image: YOUR_CCG_IMAGE
+      args: ["run", "--config", "/config/ccg.json"]
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {cpu: 200m, memory: 192Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+        seccompProfile: {type: RuntimeDefault}
+      volumeMounts:
+        - {name: data, mountPath: /data, readOnly: true}
+        - {name: state, mountPath: /state}
+        - {name: config, mountPath: /config, readOnly: true}
+        - {name: target-cgroup, mountPath: /target-cgroup, readOnly: true}
+  volumes:
+    - name: data
+      persistentVolumeClaim: {claimName: YOUR_PVC}
+    - name: state
+      emptyDir: {}
+    - name: config
+      configMap: {name: ccg-config}
+    - name: target-cgroup
+      hostPath:
+        path: /REPLACE_WITH_VERIFIED_TARGET_CGROUP
+        type: Directory

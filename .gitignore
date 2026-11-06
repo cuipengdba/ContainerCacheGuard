@@ -1,6 +1,5 @@
 /dist/
-/internal/native/assets/*.tar.gz
-/internal/native/assets/*.so
+/private/
 *.test
 __pycache__/
 *.pyc

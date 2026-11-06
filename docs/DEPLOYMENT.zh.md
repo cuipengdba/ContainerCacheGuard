@@ -1,69 +1,51 @@
-# 容器和 Kubernetes 怎样部署
+# 容器、DBS、Kubernetes 与 OpenShift 部署
 
-本文是部署与验收设计。实验机目前运行 containerd，kubelet 未运行；已有双容器实验不能称为 Kubernetes/OpenShift 驱逐验收通过。不要把以下示例直接套到业务环境，先替换路径、UID、资源预算和监控配置，在已授权的测试集群验收。
+## 先明确谁读、谁写、谁被监控
 
-## 推荐的职责划分
+备份数据库时，PGDATA 读取通常发生在数据库服务端；输出文件写入发生在备份客户端。若分别位于两个容器，就可能需要两个互不重叠的路径范围和对应 cgroup。不要只监控备份容器就声称覆盖数据库端压力。
 
-数据库服务端负责 SQL、WAL 和复制协议。备份容器运行 pgcacheguard，写独立备份目录，并只读挂载数据库实际的数据卷。控制器不需要注入数据库进程，也不需要宿主机特权。
+数据库路径优先从明确验证过的数据文件范围开始，不默认清理 WAL、事务目录和共享内存。PGDATA/base 内也包含系统目录表，不能把“在 base 下”当作都是低价值缓存。对关键热点使用 exclude_paths，必要时由数据库对象映射生成保护路径清单。
 
-同一 Pod 的两个容器比较容易共享 Unix Socket、卷和 SELinux 标签，适合第一阶段落地；但是 Pod 被驱逐会影响整个 Pod，不能把两容器误认为两份节点资源或独立故障域。两个容器的 requests、limits 都要纳入容量规划。
+## 方案一：放在现有容器内
 
-独立备份 Pod/Job 能独立分配优先级、资源和生命周期，但须调度到数据库所在节点，挂载同一实际卷，并解决卷访问模式、UID 和 SELinux 标签。两个 Pod 各有一份相同内容的数据副本不满足同 inode 条件。RWO 的具体共享行为取决于 CSI，不能把 RWO 等同于任意多 Pod 都能同时写。[Kubernetes 卷访问模式说明](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes)
+将对应架构静态二进制只读挂载/复制到容器，使用数据文件所有者 UID，配置可写的私有状态目录。由已有进程管理器启动前台 `run`。程序自动检测本容器 cgroup，路径也是业务看到的路径。
 
-更长期的架构是在专用备用库或备份节点执行备份，仓库放独立物理设备，并保留本地可直接演练的完整恢复副本。当前 PGDATA 跨容器缓存处理依赖同一宿主机内核；不能通过在另一台机器挂同名路径，去控制原节点的本地页缓存。
+它不自带后台双重 fork，不替代容器 PID 1，不接管数据库启动。不建议随意在现有 ENTRYPOINT 后追加一个永远不退出的命令。已有 supervisor/systemd/s6 等管理方式可启动独立服务；否则使用 sidecar 更清晰。
 
-## 最少需要哪些挂载
+容器只读根文件系统没有问题，但需要给 state_file 父目录一个可写目录。非 root UID 可以运行；不需要 privileged，不需要为了缓存治理授予全机 SYS_ADMIN。
 
-| 挂载 | 数据库容器 | 备份容器 | 原因 |
-| --- | --- | --- | --- |
-| PGDATA 实际卷 | 读写 | **只读** | 同 inode 的驻留查询和建议释放，不写源数据 |
-| Unix Socket 目录 | 读写 | 能连接 Socket 的权限 | 当前实际复制连接身份核对要求本机共享 Socket |
-| 备份仓库 | 通常不需要 | 读写 | 原生备份、父链及校验 |
-| 独立运行目录 | 不需要 | 读写、允许执行 | 展开客户端、控制状态、日志和结果；约 40 MiB 客户端展开空间另加位图和日志 |
-| 同盘任务共享锁目录 | 所有受控任务共同访问 | 读写 | 互斥安排同盘备份；未接入锁的 gissync 不会自动被锁住 |
-| kubelet Summary 或认证文件 | 不需要 | 只读 | 使用真实驱逐相关内存指标 |
+## 方案二：sidecar
 
-Socket 如果直接位于 PGDATA 内，也可以通过该只读目录连接已存在的 Socket，但恢复会移动 PGDATA；建议使用独立共享目录，避免路径生命周期混在一起。
+可以把共享数据卷以只读方式挂给 CCG。**必须同底层文件对象，不是另一个复制副本。** 两边核对 `stat -c '%d:%i:%u' 文件`，确认设备、inode 和 UID；再用已知文件驻留变化做小范围机制验证。
 
-## 身份和安全上下文
+sidecar 默认自动检测的是它自己，不是数据库容器。要显式设置 cgroup_path，指向业务容器的只读 cgroup 视图；容器重建后目标 cgroup 可能变化，需要由部署系统重新发现并启动。程序会验证 cgroup 文件系统和身份变化，不能把旧路径复用后继续当原目标。
 
-优先让备份进程使用数据库文件所有者的数字 UID。SQL 的 `replica` 账号和 Linux UID 是两回事，复制权限不会赋予文件驻留查询权限。建议 `runAsNonRoot: true`、`allowPrivilegeEscalation: false`、删除不需要的 capabilities，并使用集群允许的 seccomp 配置。
+这一步在不同 Kubernetes/OpenShift 集群有不同权限和挂载政策。不能提供一个硬编码 Pod UID/容器 ID 的 YAML 声称通用可用。不具备安全暴露目标 cgroup 的条件时，优先同容器运行或保持 observe。仓库 [sidecar 模板](../deploy/sidecar.example.yaml) 展示挂载和资源结构，需要部署人员填入真实 PVC、UID、路径和 cgroup 映射；不是无需修改的生产清单。
 
-PGDATA 的只读挂载不妨碍文件所有者执行本工具的 mincore/fadvise 路径。OpenShift 随机 UID 如果与现有文件所有者不一致，不能仅依靠 fsGroup 可读就宣称驻留查询准确。应使用集群批准的 UID/存储权限方案，或者先验证内核权限条件；工具不明时拒绝工作。
+OpenShift 下核对随机 UID、SCC、SELinux 卷标签及 seccomp。fsGroup 赋予读权限不必然满足 mincore 信息权限；同 UID 条件要实际验证。不要为通过一个测试便把整个 Pod 改成 privileged。
 
-还要检查 `pidfd_open` 是否存在并获 seccomp 允许。它用于客户端检查控制器存活，Linux 从 5.3 提供；当前观察器还使用 inotify，直接 PGDATA 发布使用 renameat2。静态程序不能补齐不存在的内核系统调用。[pidfd_open 接口](https://man7.org/linux/man-pages/man2/pidfd_open.2.html)
+## DBS 现有 vmtouch/nocache 调用怎么处理
 
-同 Pod 不代表自动具备文件权限。SELinux、SCC、AppArmor、seccomp、只读文件系统、`noexec`、网络策略和 CSI 都需要验收。不要为了省事默认启用 privileged。
+先用 observe 与旧方案共存，了解现有曲线，但此时不能把下降归因于 CCG。进入 enforce 对照及上线时，同一范围只保留一个执行权威：通过现有配置/调度开关停用重复清理，再启动 CCG。
 
-## 监控怎样接入
+第一版不提供假装 vmtouch/nocache 成功的空壳，不会静默覆盖系统命令。nocache 还承担运行子命令和传播退出码的责任，不能仅用一个释放请求替代。若现有 DBS 二进制完全没有开关，需要单独设计并验证接入方式；“不改 Python 源码”不代表零部署修改。
 
-生产建议 `require_kubelet_stats=true`，选择下列一种来源：
+原生 pg_basebackup 调用可以保留，包括其吞吐限速。CCG 独立工作，不插入备份协议，也不再承诺兼容/打包所有 PG18 客户端参数。
 
-1. `kubelet_summary_url`：验证 HTTPS 证书，通过受限 ServiceAccount 身份读取本节点 Summary；配置 CA 与 token 文件，不关闭 TLS 校验。
-2. `kubelet_summary_file`：由已有可信节点监控组件定期原子更新 JSON；文件中的样本时间必须新鲜。该组件需要单独运维，复制一份静态 JSON 不能长期提供保护。
+## 资源配置与灰度
 
-必须核对 Summary 确实来自数据库所在节点。令牌的 RBAC、kubelet 认证授权与证书要求取决于集群，不要把本地 root SSH 权限当成 Kubernetes API 已授权。
+1. 先配置明确的缓存软目标和业务容忍阈值，运行 observe，确认日志中的 roots/cgroup/degraded。
+2. 从已完成的备份、导出等低复用目录启用 enforce；比较相同业务量下的缓存、磁盘读写、业务 p95/p99 和错误率。
+3. 对 PGDATA 使用更保守的保护期、热点排除和较低初始速率，验证备份与同步单独和重叠场景。
+4. 回收速率逐步调整，不同时修改业务量、容器内存和磁盘限速，避免无法解释效果。
+5. CCG 自身的 CPU/RSS 是软保护。sidecar 可额外设置 requests/limits，CPU limit 太小会延迟控制，内存 limit 太小会让守护程序退出；应按实测峰值留余量。
 
-可选的 `cgroups` 读取 cgroup v2 的 memory.current/stat/events，提供工作集、active_file 和新 OOM kill 检测。如果备份容器无法看到数据库 cgroup，不能填写一个猜测的路径。只读挂整个宿主机 cgroup 的 hostPath 可能不符合 Pod Security/SCC；生产应由运维选择允许的只读监控方式。没有直接 cgroup 数据时，节点 Summary 的停止线仍可启用，但不能声称已经具备缺失的逐容器 active_file/OOM 监控。
+在紧张节点上给新 sidecar 设置 request 也需要调度容量。不要为了加控制器而挤掉业务的基本内存。
 
-Linux `/proc/meminfo` 的 MemAvailable 与 kubelet memory.available 不是同一指标。工具的本地实验回退会明确标识前者；生产针对驱逐的验收必须检查后者。
+## 回退
 
-## 资源值怎样选择
+SIGUSR1 暂停新释放，检查业务恢复情况；SIGTERM 退出。保留日志和状态文件，不删除数据或备份。已释放的缓存由业务自然重新建立，不做整库强制预热制造 IO 高峰。恢复原脚本前先确认 CCG 已停止，对照阶段同一范围不同时运行两套清理。
 
-不能把某次测试的 20 MiB/s 或 64 MiB/s 当作统一安全值。先测业务峰值、同盘可用带宽和延迟，再给备份读写预算。1.5 TB 在 24 小时内仅完成一次传输，平均至少需要约 17.4 MB/s；若按 1.5 TiB 则约 19.1 MB/s。这还没有计入估算、检查点、WAL、校验和停顿。同盘读写以及完整校验增加实际设备工作量，低于所需预算时应调整存储或备份架构，不能同时保证任意低速与固定窗口。
+## 能证明什么、不能证明什么
 
-requests 应覆盖业务稳定工作集与合理缓存需求，limits 需结合节点实际容量；不要给一台几十 GiB 的节点配置几乎不可能兑现的数据库内存上限，然后依靠驱逐兜底。Guaranteed/Burstable 等 QoS 和 Priority 影响行为，但不保证在节点持续内存不足时永不驱逐。
-
-`memory.high` 控制的是整个 cgroup 的内存回收和节流，不是普通文件缓存专用上限。`io.max` 给数据库 cgroup 限速会连 SQL、WAL 和检查点一起限制。先在专用备份容器控制客户端，再评估数据库侧兜底上限；记录回收 IO 和业务延迟，不在生产边压测边试猜值。
-
-## 接入和回退顺序
-
-1. 记录当前命令、调度、资源、备份链和恢复流程，保留原入口。
-2. 用 `doctor` 与小任务核对 Socket、实例标识、PGDATA、UID、挂载、Summary 新鲜度、预算和锁。
-3. 完成全量、连续增量、校验、合并及独立恢复启动，验证失败退出码确实被 DBS 处理。
-4. 在与业务有代表性的负载下，执行相同限速的缓存对照和故障矩阵，确认节点安全余量与查询延迟。
-5. 再安排受控时间窗切换调用路径；保留原工具入口和最后一条已验证备份链，出现异常先停新任务再回退。
-
-如果只是设置 PATH，需确认 DBS 实际调用的是裸工具名，还是写死的绝对路径。兼容别名需要 `PGCACHEGUARD_CONFIG` 和正确的子命令名，不能把控制器二进制直接覆盖原生工具后仍让配置指向自身，造成递归执行。
-
-现有 DBS 在恢复前可能移动旧 PGDATA 并异步压缩。这个 Python 线程不在本工具的子进程控制范围。启用 `allow_stopped_pgdata_restore` 只能保护工具自身的空目标 staging 发布，不能自动修复外部 Python 的删除、压缩、调度或错误处理；接入验收必须单独覆盖这些步骤。
+容器实验能验证共享文件页、权限、资源记账和业务 IO；没有 kubelet 的 containerd 环境不能验证驱逐排序和阈值。要证明减少 Kubernetes/OpenShift 驱逐，需要在真实集群记录节点 memory.available、驱逐事件、requests/limits、业务量和 OOM 事件，并完成足够时长的对照。

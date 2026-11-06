@@ -1,0 +1,46 @@
+name: ContainerCacheGuard native CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, arch: amd64}
+          - {runner: ubuntu-24.04-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Test and race detector
+        run: |
+          go vet ./...
+          go test -race -count=1 -v ./... | tee unit-results.log
+      - name: Build static native binary
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X main.version=0.1.0-rc.1 -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
+          file dist/containercacheguard-linux-${{ matrix.arch }} | tee binary-info.txt
+          ! readelf -l dist/containercacheguard-linux-${{ matrix.arch }} | grep -q INTERP
+          ! readelf -d dist/containercacheguard-linux-${{ matrix.arch }} | grep -q NEEDED
+      - name: CLI integration
+        run: python3 scripts/integration.py dist/containercacheguard-linux-${{ matrix.arch }} --output integration-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ccg-native-${{ matrix.arch }}
+          path: |
+            dist/
+            *results.*
+            binary-info.txt

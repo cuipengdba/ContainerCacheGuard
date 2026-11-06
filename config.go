@@ -7,245 +7,177 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"time"
 )
 
-type CgroupBudget struct {
-	Path          string `json:"path"`
-	MaxWorkingSet uint64 `json:"max_working_set_bytes"`
-	MaxActiveFile uint64 `json:"max_active_file_bytes"`
-}
+const MiB int64 = 1 << 20
+
+// Config has no executable hooks and never changes cgroup limits.
 type Config struct {
-	bundledDir         string
-	expectedSystemID   string
-	Backend            string         `json:"backend"`
-	Basebackup         string         `json:"pg_basebackup"`
-	Verifybackup       string         `json:"pg_verifybackup"`
-	Combinebackup      string         `json:"pg_combinebackup"`
-	BitmapBudget       uint64         `json:"bitmap_budget_bytes"`
-	PGData             string         `json:"pgdata"`
-	Repository         string         `json:"repository"`
-	Stanza             string         `json:"stanza"`
-	Engine             string         `json:"pgbackrest"`
-	EngineConfig       string         `json:"pgbackrest_config"`
-	PSQL               string         `json:"psql"`
-	PGHost             string         `json:"pg_host"`
-	PGPort             int            `json:"pg_port"`
-	PGUser             string         `json:"pg_user"`
-	PGCheckUser        string         `json:"pg_check_user"`
-	PGDatabase         string         `json:"pg_database"`
-	RuntimeDir         string         `json:"runtime_dir"`
-	LockFiles          []string       `json:"lock_files"`
-	ReadBPS            uint64         `json:"read_bytes_per_second"`
-	WriteBPS           uint64         `json:"write_bytes_per_second"`
-	FlushBytes         uint64         `json:"flush_bytes"`
-	ReadWindowBytes    uint64         `json:"read_window_bytes"`
-	RateBurstBytes     uint64         `json:"rate_burst_bytes"`
-	CachePolicy        string         `json:"cache_policy"`
-	ProcessMax         int            `json:"process_max"`
-	MinAvailable       uint64         `json:"min_node_available_bytes"`
-	WarnAvailable      uint64         `json:"warn_node_available_bytes"`
-	KubeletFile        string         `json:"kubelet_summary_file"`
-	KubeletURL         string         `json:"kubelet_summary_url"`
-	KubeletCA          string         `json:"kubelet_ca_file"`
-	KubeletToken       string         `json:"kubelet_token_file"`
-	StatsMaxAgeSeconds int            `json:"stats_max_age_seconds"`
-	Cgroups            []CgroupBudget `json:"cgroups"`
-	PollMS             int            `json:"poll_ms"`
-	DeadlineSeconds    int            `json:"deadline_seconds"`
-	GraceSeconds       int            `json:"grace_seconds"`
-	LockWaitSeconds    int            `json:"lock_wait_seconds"`
-	RequireKubelet     bool           `json:"require_kubelet_stats"`
-	RestoreToPGData    bool           `json:"allow_stopped_pgdata_restore"`
+	Mode                         string   `json:"mode"`
+	Action                       string   `json:"action"`
+	Paths                        []string `json:"paths"`
+	AutoRoots                    []string `json:"auto_roots"`
+	ExcludePaths                 []string `json:"exclude_paths"`
+	ExcludeNames                 []string `json:"exclude_names"`
+	CgroupPath                   string   `json:"cgroup_path"`
+	StateFile                    string   `json:"state_file"`
+	BusinessSignal               string   `json:"business_signal"`
+	SignalMaxAgeSeconds          int      `json:"signal_max_age_seconds"`
+	MaxBusinessP99MS             float64  `json:"max_business_p99_ms"`
+	IntervalMS                   int      `json:"interval_ms"`
+	LogIntervalSeconds           int      `json:"log_interval_seconds"`
+	WarmupSeconds                int      `json:"warmup_seconds"`
+	ProtectSeconds               int      `json:"protect_seconds"`
+	MinFileAgeSeconds            int      `json:"min_file_age_seconds"`
+	CooldownSeconds              int      `json:"cooldown_seconds"`
+	RescanSeconds                int      `json:"rescan_seconds"`
+	CacheTargetBytes             int64    `json:"cache_target_bytes"`
+	CacheTargetRatio             float64  `json:"cache_target_ratio"`
+	Trigger                      string   `json:"trigger"`
+	MemoryHighRatio              float64  `json:"memory_high_ratio"`
+	MemoryCriticalRatio          float64  `json:"memory_critical_ratio"`
+	MaxDirtyBytes                int64    `json:"max_dirty_bytes"`
+	MaxIOBytesPerSecond          int64    `json:"max_io_bytes_per_second"`
+	MaxIOPSIAvg10                float64  `json:"max_io_psi_avg10"`
+	MinNodeAvailableBytes        int64    `json:"min_node_available_bytes"`
+	ScanBytesPerSecond           int64    `json:"scan_bytes_per_second"`
+	ReclaimBytesPerSecond        int64    `json:"reclaim_bytes_per_second"`
+	InitialReclaimBytesPerSecond int64    `json:"initial_reclaim_bytes_per_second"`
+	RegionBytes                  int64    `json:"region_bytes"`
+	DiscoverEntriesPerSecond     int      `json:"discover_entries_per_second"`
+	MaxFiles                     int      `json:"max_files"`
+	MaxDirectories               int      `json:"max_directories"`
+	MaxRegions                   int      `json:"max_regions"`
+	MaxOperationsPerSecond       int      `json:"max_operations_per_second"`
+	MaxCPUPercent                float64  `json:"max_cpu_percent"`
+	MaxRSSBytes                  int64    `json:"max_rss_bytes"`
+	MaxReappearanceRatio         float64  `json:"max_reappearance_ratio"`
+	RecheckSeconds               int      `json:"recheck_seconds"`
+	WorkerBudgetMS               int      `json:"worker_budget_ms"`
+}
+
+func defaultConfig() Config {
+	return Config{
+		Mode: "auto", Action: "observe", Paths: []string{}, AutoRoots: []string{}, ExcludePaths: []string{},
+		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
+		StateFile:    "/tmp/containercacheguard/status.json", SignalMaxAgeSeconds: 10,
+		IntervalMS: 1000, LogIntervalSeconds: 10, WarmupSeconds: 60, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
+		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
+		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
+		DiscoverEntriesPerSecond: 500, MaxFiles: 150000, MaxDirectories: 20000, MaxRegions: 8192, MaxOperationsPerSecond: 1000,
+		MaxCPUPercent: 5, MaxRSSBytes: 128 * MiB, MaxReappearanceRatio: 0.25, RecheckSeconds: 5, WorkerBudgetMS: 25,
+	}
 }
 
 func loadConfig(path string) (Config, error) {
-	c := Config{Backend: "native", BitmapBudget: 256 << 20, PGPort: 5432, PGUser: "postgres", PGDatabase: "postgres", ProcessMax: 1,
-		FlushBytes: 8 << 20, ReadWindowBytes: 8 << 20, RateBurstBytes: 1 << 20, CachePolicy: "preserve-hot", PollMS: 1000, DeadlineSeconds: 86400, GraceSeconds: 30, StatsMaxAgeSeconds: 15}
-	f, err := os.Open(path)
-	if err != nil {
-		return c, err
+	c := defaultConfig()
+	if path == "" {
+		return c, nil
+	}
+	f, e := os.Open(path)
+	if e != nil {
+		return c, e
 	}
 	defer f.Close()
 	d := json.NewDecoder(io.LimitReader(f, 1<<20))
 	d.DisallowUnknownFields()
-	if err = d.Decode(&c); err != nil {
-		return c, fmt.Errorf("configuration: %w", err)
+	if e = d.Decode(&c); e != nil {
+		return c, e
 	}
-	if err = d.Decode(new(any)); err != io.EOF {
-		return c, errors.New("configuration must contain one JSON object")
+	var extra any
+	if e = d.Decode(&extra); e != io.EOF {
+		return c, errors.New("配置只能包含一个 JSON 对象")
 	}
-	return c, c.validate()
+	return c, nil
 }
-func (c *Config) validate() error {
-	if c.Backend != "pgbackrest" && c.Backend != "native" {
-		return errors.New("backend must be native or pgbackrest")
+func (c Config) validate() error {
+	if c.Mode != "auto" && c.Mode != "paths" {
+		return errors.New("mode 必须为 auto 或 paths")
 	}
-	paths := map[string]*string{"pgdata": &c.PGData, "repository": &c.Repository, "psql": &c.PSQL, "runtime_dir": &c.RuntimeDir}
-	if c.Backend == "native" {
-		paths["pg_basebackup"] = &c.Basebackup
-		paths["pg_verifybackup"] = &c.Verifybackup
-		paths["pg_combinebackup"] = &c.Combinebackup
-	} else {
-		paths["pgbackrest"] = &c.Engine
-		paths["pgbackrest_config"] = &c.EngineConfig
+	if c.Action != "observe" && c.Action != "enforce" {
+		return errors.New("action 必须为 observe 或 enforce")
 	}
-	for name, p := range paths {
-		if c.Backend == "native" && *p == "" && (name == "psql" || name == "pg_basebackup" || name == "pg_verifybackup" || name == "pg_combinebackup") {
-			continue // populated from the embedded static toolchain at admission
-		}
-		if !filepath.IsAbs(*p) || strings.ContainsAny(*p, ":\n\r\x00") {
-			return fmt.Errorf("%s must be an absolute Linux path without colon or newline", name)
-		}
-		*p = filepath.Clean(*p)
-		if *p == string(filepath.Separator) {
-			return fmt.Errorf("%s cannot be filesystem root", name)
-		}
+	if c.Mode == "paths" && len(c.Paths) == 0 {
+		return errors.New("paths 模式至少需要一个路径")
 	}
-	if c.BitmapBudget < 1<<20 || c.BitmapBudget > 1<<30 {
-		return errors.New("bitmap_budget_bytes must be 1MiB..1GiB")
+	if c.Mode == "auto" && len(c.Paths) > 0 {
+		return errors.New("auto 模式使用 auto_roots；paths 只用于 paths 模式")
 	}
-	if overlap(c.PGData, c.Repository) || overlap(c.PGData, c.RuntimeDir) || overlap(c.Repository, c.RuntimeDir) {
-		return errors.New("PGDATA, repository and runtime directory must be disjoint")
+	if c.Trigger != "budget" && c.Trigger != "pressure" && c.Trigger != "always" {
+		return errors.New("trigger 必须为 budget、pressure 或 always")
 	}
-	if c.Backend == "pgbackrest" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`).MatchString(c.Stanza) {
-		return errors.New("invalid stanza")
+	if c.IntervalMS < 100 || c.IntervalMS > 60000 || c.WorkerBudgetMS < 1 || c.WorkerBudgetMS > 1000 {
+		return errors.New("interval_ms 范围100..60000，worker_budget_ms范围1..1000")
 	}
-	if c.PGPort < 1 || c.PGPort > 65535 || c.ProcessMax < 1 || c.ProcessMax > 16 {
-		return errors.New("invalid port or process_max (1..16)")
+	if c.LogIntervalSeconds < 1 || c.RescanSeconds < 1 || c.RecheckSeconds < 1 || c.SignalMaxAgeSeconds < 1 {
+		return errors.New("日志、重扫、复查、信号有效期必须为正数")
 	}
-	if c.ReadBPS < 32768 || c.WriteBPS < 32768 || c.ReadBPS > 1<<40 || c.WriteBPS > 1<<40 {
-		return errors.New("explicit read/write limits between 32KiB/s and 1TiB/s are required")
+	if c.WarmupSeconds < 0 || c.ProtectSeconds < 0 || c.MinFileAgeSeconds < 0 || c.CooldownSeconds < 1 {
+		return errors.New("保护时间不能为负；冷却时间必须为正")
 	}
-	if c.FlushBytes < 4096 || c.FlushBytes > 64<<20 {
-		return errors.New("flush_bytes must be between 4096 and 64MiB")
+	if c.CacheTargetBytes < 0 || c.MaxDirtyBytes < 0 || c.MaxIOBytesPerSecond < 0 || c.MinNodeAvailableBytes < 0 {
+		return errors.New("字节阈值不能为负")
 	}
-	if (c.ReadWindowBytes != 0 && (c.ReadWindowBytes < 4096 || c.ReadWindowBytes > 64<<20)) || c.RateBurstBytes > 64<<20 {
-		return errors.New("read_window_bytes must be 0 or 4096..64MiB; rate_burst_bytes must be 0..64MiB")
+	if c.CacheTargetRatio <= 0 || c.CacheTargetRatio >= 1 || c.MemoryHighRatio <= 0 || c.MemoryCriticalRatio <= c.MemoryHighRatio || c.MemoryCriticalRatio >= 1 {
+		return errors.New("比例需满足 0<target<1，0<high<critical<1")
 	}
-	if c.CachePolicy != "preserve-hot" && c.CachePolicy != "destination-only" && c.CachePolicy != "off" {
-		return errors.New("cache_policy must be preserve-hot, destination-only, or off (rate-limited baseline)")
+	if c.MaxReappearanceRatio <= 0 || c.MaxReappearanceRatio > 1 || c.MaxCPUPercent <= 0 || c.MaxCPUPercent > 100 || c.MaxIOPSIAvg10 < 0 {
+		return errors.New("CPU、PSI 或重新驻留比例无效")
 	}
-	if c.PollMS < 100 || c.PollMS > 10000 || c.DeadlineSeconds < 1 || c.DeadlineSeconds > 604800 || c.GraceSeconds < 1 || c.GraceSeconds > 120 || c.LockWaitSeconds < 0 || c.LockWaitSeconds > 86400 {
-		return errors.New("invalid polling/deadline/grace/lock wait setting")
+	if c.RegionBytes < 65536 || c.RegionBytes > 64*MiB || c.RegionBytes%65536 != 0 {
+		return errors.New("region_bytes 为 64KiB 的整数倍，范围64KiB..64MiB，兼容4K/64K页")
 	}
-	if c.MinAvailable > 0 && c.WarnAvailable < c.MinAvailable {
-		return errors.New("warn_node_available_bytes must be >= min_node_available_bytes")
+	if c.ScanBytesPerSecond < c.RegionBytes || c.ScanBytesPerSecond > 16<<30 || c.InitialReclaimBytesPerSecond < c.RegionBytes || c.ReclaimBytesPerSecond < c.InitialReclaimBytesPerSecond || c.ReclaimBytesPerSecond > 16<<30 {
+		return errors.New("扫描与初始回收速率至少一个 region；最大回收不得低于初始值；上限16GiB/s")
 	}
-	if c.StatsMaxAgeSeconds < 1 || c.StatsMaxAgeSeconds > 300 {
-		return errors.New("stats_max_age_seconds must be 1..300")
+	if c.MaxFiles < 1 || c.MaxFiles > 1000000 || c.MaxDirectories < 1 || c.MaxDirectories > 100000 || c.MaxRegions < 1 || c.MaxRegions > 1000000 || c.MaxOperationsPerSecond < 1 || c.MaxOperationsPerSecond > 100000 || c.DiscoverEntriesPerSecond < 1 || c.DiscoverEntriesPerSecond > 100000 || c.MaxRSSBytes < 16*MiB {
+		return errors.New("索引/操作/内存预算超出有效范围")
 	}
-	if c.KubeletFile != "" && c.KubeletURL != "" {
-		return errors.New("select either kubelet_summary_file or kubelet_summary_url")
-	}
-	if c.RequireKubelet && c.KubeletFile == "" && c.KubeletURL == "" {
-		return errors.New("require_kubelet_stats needs a kubelet summary source")
-	}
-	if c.MinAvailable == 0 && len(c.Cgroups) == 0 {
-		return errors.New("configure at least one memory safety budget")
-	}
-	if len(c.LockFiles) == 0 {
-		return errors.New("at least one shared per-device lock file is required")
-	}
-	for _, p := range c.LockFiles {
-		if !filepath.IsAbs(p) || strings.ContainsAny(p, "\n\r\x00") || overlap(c.PGData, p) || overlap(c.Repository, p) {
-			return errors.New("lock files must be absolute and outside PGDATA/repository")
+	for _, p := range append(append(append([]string{}, c.Paths...), c.AutoRoots...), c.ExcludePaths...) {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+			return fmt.Errorf("路径必须为规范绝对路径: %q", p)
 		}
 	}
-	for _, b := range c.Cgroups {
-		if !filepath.IsAbs(b.Path) || (b.MaxWorkingSet == 0 && b.MaxActiveFile == 0) {
-			return errors.New("each cgroup needs an absolute path and a nonzero budget")
+	for _, p := range append(append([]string{}, c.Paths...), c.AutoRoots...) {
+		if forbiddenRoot(p) {
+			return fmt.Errorf("禁止治理系统或根目录: %s", p)
 		}
+	}
+	if !filepath.IsAbs(c.StateFile) || (c.BusinessSignal != "" && !filepath.IsAbs(c.BusinessSignal)) {
+		return errors.New("state_file/business_signal 必须为绝对路径")
 	}
 	return nil
 }
-func within(root, p string) bool {
-	rel, err := filepath.Rel(root, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+func beneath(p, root string) bool {
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
-func overlap(a, b string) bool { return within(a, b) || within(b, a) }
-
-// Resolve existing ancestors too, so a missing restore target below a symlink
-// cannot bypass disjointness checks.
-func canonical(path string) (string, error) {
-	p := filepath.Clean(path)
-	var tail []string
-	for {
-		r, err := filepath.EvalSymlinks(p)
-		if err == nil {
-			for i := len(tail) - 1; i >= 0; i-- {
-				r = filepath.Join(r, tail[i])
+func forbiddenRoot(p string) bool {
+	if p == "/" || p == "/var" || p == "/var/lib" || p == "/opt" || p == "/usr" || p == "/tmp" || p == "/run" || p == "/home" || p == "/app" {
+		return true
+	}
+	for _, x := range []string{"/proc", "/sys", "/dev", "/etc", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/lib", "/lib64", "/boot", "/var/lib/docker", "/var/lib/containerd", "/var/lib/kubelet"} {
+		if beneath(p, x) {
+			return true
+		}
+	}
+	return false
+}
+func (c Config) excluded(p string) bool {
+	if forbiddenRoot(p) {
+		return true
+	}
+	for _, x := range c.ExcludePaths {
+		if beneath(p, x) {
+			return true
+		}
+	}
+	for _, part := range strings.Split(p, string(filepath.Separator)) {
+		for _, n := range c.ExcludeNames {
+			if part == n {
+				return true
 			}
-			return r, nil
 		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return "", err
-		}
-		tail = append(tail, filepath.Base(p))
-		p = parent
 	}
-}
-func (c *Config) resolve() error {
-	paths := []*string{&c.PGData, &c.Repository, &c.RuntimeDir, &c.PSQL}
-	if c.Backend == "native" {
-		paths = append(paths, &c.Basebackup, &c.Verifybackup, &c.Combinebackup)
-	} else {
-		paths = append(paths, &c.Engine, &c.EngineConfig)
-	}
-	for _, p := range paths {
-		if c.Backend == "native" && *p == "" {
-			continue
-		}
-		r, e := canonical(*p)
-		if e != nil {
-			return e
-		}
-		*p = r
-	}
-	return c.validate()
-}
-func atomicJSON(path string, value any) error {
-	b, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	b = append(b, '\n')
-	f, err := os.CreateTemp(filepath.Dir(path), ".pg18guard-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(b)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	ce := f.Close()
-	if err == nil {
-		err = ce
-	}
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(tmp, path); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(path))
-}
-func event(kind string, fields map[string]any) {
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	fields["event"] = kind
-	fields["time"] = time.Now().UTC().Format(time.RFC3339Nano)
-	b, _ := json.Marshal(fields)
-	fmt.Fprintln(os.Stderr, string(b))
+	return false
 }
