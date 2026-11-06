@@ -43,3 +43,11 @@ dist/pgcacheguard-linux-amd64 basebackup --help
 Go 编译前必须先生成对应架构的内嵌客户端资源，所以全新源码不能跳过工具链构建直接运行 `go build`。源码可复建不等于不同时间、路径和 Go 版本生成的二进制逐字节相同；当前未承诺可重复构建的字节级一致性。
 
 已完成的 amd64 实验构建和 ARM64 交叉构建有独立证据。这里新增的通用构建入口还需要在干净构建机回归；不能把既有私有目录构建成功当作所有发行版都已通过。
+
+## GitHub 上的双架构原生验证
+
+仓库的 `Native static build and recovery smoke` 工作流分别使用 `ubuntu-24.04` 和 `ubuntu-24.04-arm`。GitHub 的[运行器说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)列出这两个架构；ARM 任务在 ARM CPU 上运行，不依靠本项目的 QEMU 配置。工作流记录实际架构和系统页大小，不能把普通 ARM 机器通过写成真实 64 KiB 页内核也通过。
+
+每个任务从固定 SHA256 的上游源码构建静态工具，运行 Go 测试，再独立构建一个 PG18 源数据库，测试全量、连续两代增量、三份合并结果的实际启动与数据核对，以及缺父链、已有目标和损坏拒绝。测试数据是临时生成的小数据；它补充双架构兼容性证据，不能代替迁移真实数据上的性能、缓存或 Kubernetes 驱逐验收。
+
+Actions 中保留二进制、SHA256、客户端构建报告、环境和测试日志 30 天。构建产物不自动标成正式 Release。判断是否通过应查看对应提交的工作流结果，不能仅凭存在工作流文件。源码 checkout 不持久化凭据，工作流只申请仓库读取权限。

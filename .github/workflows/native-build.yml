@@ -1,0 +1,75 @@
+name: Native static build and recovery smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.go'
+      - go.mod
+      - native/**
+      - internal/**
+      - scripts/build-*.py
+      - scripts/sources.json
+      - scripts/ci-native-smoke.py
+      - .github/workflows/native-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Install build dependencies on this disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils perl bison flex pkg-config linux-libc-dev python3
+      - name: Record native environment
+        run: |
+          mkdir -p dist
+          uname -a > dist/runner.txt
+          getconf PAGESIZE >> dist/runner.txt
+          go version >> dist/runner.txt
+          gcc --version >> dist/runner.txt
+      - name: Build clients and controller from pinned sources
+        run: python3 scripts/build-release.py --build-root "$RUNNER_TEMP/pgcacheguard-build"
+      - name: Run Go unit tests on the native CPU
+        run: go test -v ./... | tee dist/unit-tests.txt
+      - name: Build isolated PG18 server and test full/incremental recovery
+        run: >-
+          python3 scripts/ci-native-smoke.py
+          --binary "$PWD/dist/pgcacheguard-linux-${{ matrix.arch }}"
+          --source-archive "$RUNNER_TEMP/pgcacheguard-build/sources/postgresql-18.6.tar.bz2"
+          --work "$RUNNER_TEMP/pgcacheguard-smoke"
+          --report-dir "$PWD/dist/smoke"
+      - name: Preserve binaries, checksums and evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: pgcacheguard-native-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            dist/pgcacheguard-linux-*
+            dist/native-build-*.json
+            dist/runner.txt
+            dist/unit-tests.txt
+            dist/smoke/
+          if-no-files-found: error
+          retention-days: 30
