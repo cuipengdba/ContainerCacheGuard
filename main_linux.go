@@ -424,8 +424,16 @@ func scanCommand(c Config, roots []string, duration time.Duration) error {
 			report.Files++
 			report.Bytes += id.Size
 			for off := int64(0); off < id.Size; off += c.RegionBytes {
+				if !deadline.IsZero() && time.Now().After(deadline) {
+					report.Complete = false
+					return context.DeadlineExceeded
+				}
 				n := min64(c.RegionBytes, id.Size-off)
 				for {
+					if !deadline.IsZero() && time.Now().After(deadline) {
+						report.Complete = false
+						return context.DeadlineExceeded
+					}
 					b.refill(time.Now(), float64(c.ScanBytesPerSecond), float64(c.RegionBytes))
 					if b.take(float64(n)) {
 						break

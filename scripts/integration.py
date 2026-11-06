@@ -33,13 +33,14 @@ def main():
         log=(w/'daemon.log').open('w');p=subprocess.Popen([binary,'run','--config',str(config)],stdout=log,stderr=subprocess.STDOUT)
         try:
             state=w/'run/status.json';s=wait_state(state,lambda s:s['counters']['observed_net_reduction_bytes']>=16<<20);checks.append('enforce_measured_reduction')
-            os.kill(p.pid,signal.SIGUSR1);s=wait_state(state,lambda s:s['decision']['state']=='SUSPENDED');n=s['counters']['advice_bytes'];time.sleep(1.5);s=json.loads(state.read_text());assert s['counters']['advice_bytes']==n;checks.append('pause_stops_advice')
+            os.kill(p.pid,signal.SIGUSR1);wait_state(state,lambda s:s['decision']['state']=='SUSPENDED');time.sleep(.3);s=json.loads(state.read_text());n=s['counters']['advice_bytes'];time.sleep(1.5);s=json.loads(state.read_text());assert s['counters']['advice_bytes']==n;checks.append('pause_stops_advice')
             second=subprocess.run([binary,'run','--config',str(config),'--duration','1s'],capture_output=True,text=True,timeout=10);assert second.returncode!=0 and 'another daemon' in second.stderr;checks.append('duplicate_instance_rejected')
             hot=json.loads(run([binary,'scan','--path',protected]));assert hot['Resident']>=60<<20;checks.append('excluded_file_stays_resident')
             os.kill(p.pid,signal.SIGUSR2);wait_state(state,lambda s:not s['paused']);checks.append('resume')
         finally:
             p.terminate();p.wait(10);log.close()
         assert hashlib.sha256(file.read_bytes()).hexdigest()==digest;checks.append('content_unchanged')
+        started=time.monotonic();timed=subprocess.run([binary,'scan','--path',str(file),'--scan-bytes-per-second',str(4<<20),'--duration','100ms'],capture_output=True,text=True,timeout=3);assert timed.returncode!=0 and time.monotonic()-started<2;assert json.loads(timed.stdout)['Complete'] is False;checks.append('scan_deadline_inside_large_file')
         # Auto scope is tested separately, in observe mode; it never evicts
         # arbitrary runner data while discovering mounted data directories.
         cfg.update(mode='auto',paths=[],auto_roots=[str(data)],action='observe',state_file=str(w/'auto/status.json'))
