@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w -X main.version=0.1.0-rc.3 -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
+          go build -trimpath -ldflags "-s -w -X main.version=0.1.0-rc.4 -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
           file dist/containercacheguard-linux-${{ matrix.arch }} | tee binary-info.txt
           readelf -h dist/containercacheguard-linux-${{ matrix.arch }} > elf-header.txt
           ! readelf -l dist/containercacheguard-linux-${{ matrix.arch }} | grep -q INTERP

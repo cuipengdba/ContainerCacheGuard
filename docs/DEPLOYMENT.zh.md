@@ -14,6 +14,8 @@
 
 容器只读根文件系统没有问题，但需要给 state_file 父目录一个可写目录。非 root UID 可以运行；不需要 privileged，不需要为了缓存治理授予全机 SYS_ADMIN。
 
+部分手工 `ctr run` 容器没有挂载 cgroup 文件系统。仅存在 `/sys/fs/cgroup` 空目录不够，doctor 会失败；由部署者提供真实只读 cgroup 视图，确保 `/proc/self/cgroup` 能对应到挂载中，或显式设置 cgroup_path。程序不会自行挂载宿主 cgroup、申请特权或在指标缺失时盲目回收。
+
 ## 方案二：sidecar
 
 可以把共享数据卷以只读方式挂给 CCG。**必须同底层文件对象，不是另一个复制副本。** 两边核对 `stat -c '%d:%i:%u' 文件`，确认设备、inode 和 UID；再用已知文件驻留变化做小范围机制验证。

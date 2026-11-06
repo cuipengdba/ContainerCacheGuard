@@ -264,3 +264,20 @@ func TestAccessHintsDoNotObserveTheirOwnScan(t *testing.T) {
 		t.Fatal("real read not observed")
 	}
 }
+
+func TestSafeOpenWalkFallback(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "f")
+	os.WriteFile(p, []byte("x"), 0600)
+	f, err := safeOpenWalk(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(d, "link")
+	os.Symlink(p, link)
+	if f, err := safeOpenWalk(link); err == nil {
+		f.Close()
+		t.Fatal("fallback followed symlink")
+	}
+}

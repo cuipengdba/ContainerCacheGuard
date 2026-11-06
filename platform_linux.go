@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -33,6 +34,32 @@ func sameFile(a, b identity) bool {
 // Every component is opened beneath an already open directory without following
 // symlinks. O_NONBLOCK prevents a malicious replacement FIFO from blocking open.
 func safeOpen(path string) (*os.File, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, errors.New("absolute clean path required")
+	}
+	if openat2Capability.Load() >= 0 {
+		p, err := syscall.BytePtrFromString(path)
+		if err != nil {
+			return nil, err
+		}
+		how := struct{ Flags, Mode, Resolve uint64 }{Flags: uint64(syscall.O_RDONLY | syscall.O_CLOEXEC | syscall.O_NOFOLLOW | syscall.O_NONBLOCK), Resolve: 0x02 | 0x04}
+		fd, _, errno := syscall.Syscall6(437, ^uintptr(99), uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&how)), unsafe.Sizeof(how), 0, 0)
+		if errno == 0 {
+			openat2Capability.Store(1)
+			return os.NewFile(fd, path), nil
+		}
+		if errno == syscall.ENOSYS || errno == syscall.EINVAL || errno == syscall.E2BIG || (errno == syscall.EPERM && openat2Capability.Load() == 0) {
+			openat2Capability.Store(-1)
+		} else {
+			return nil, errno
+		}
+	}
+	return safeOpenWalk(path)
+}
+
+var openat2Capability atomic.Int32
+
+func safeOpenWalk(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return nil, errors.New("absolute clean path required")
 	}
