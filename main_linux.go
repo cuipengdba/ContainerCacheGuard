@@ -38,6 +38,7 @@ auto 自动发现磁盘数据挂载、常用数据目录和 PGDATA；paths 仅�
 --duration 30s 限制运行时长；默认持续运行。--config 支持完整 JSON 参数，未知参数报错。
 run 可覆盖 --cache-target-bytes、--reclaim-bytes-per-second、--cgroup-path、--state-file。
 SIGUSR1 暂停新释放，SIGUSR2 恢复，SIGTERM/SIGINT 退出；配置修改需重启。
+web_listen 可选启用内置只读页面；默认关闭。非回环地址必须配置 web_token_file。
 scan 是只读驻留扫描，输出不是热度；可能需要完整遍历，不属于常态轻量监控。
 
 只操作已授权路径下支持的普通磁盘文件。不会删除文件、清空应用堆、清理全机缓存、
@@ -72,6 +73,8 @@ func entry(args []string) error {
 	action := fs.String("action", "", "observe 或 enforce")
 	cg := fs.String("cgroup-path", "", "目标 memory cgroup 绝对路径")
 	state := fs.String("state-file", "", "状态 JSON 文件绝对路径")
+	webListen := fs.String("web-listen", "", "只读 Web 监听地址，例如 127.0.0.1:9898")
+	webTokenFile := fs.String("web-token-file", "", "Web HTTP Basic 密钥文件绝对路径；用户名 ccg")
 	var paths pathsFlag
 	fs.Var(&paths, "path", "治理路径，可重复（设置后选择 paths 模式）")
 	target := fs.Int64("cache-target-bytes", -1, "容器普通文件缓存软预算，字节")
@@ -103,6 +106,12 @@ func entry(args []string) error {
 	}
 	if *state != "" {
 		c.StateFile = *state
+	}
+	if *webListen != "" {
+		c.WebListen = *webListen
+	}
+	if *webTokenFile != "" {
+		c.WebTokenFile = *webTokenFile
 	}
 	if len(paths) > 0 {
 		c.Paths = paths
@@ -265,6 +274,13 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 		ctx, stop = context.WithTimeout(ctx, duration)
 		defer stop()
 	}
+	web, webErr := startWeb(ctx, c)
+	if webErr != nil {
+		return webErr
+	}
+	if web != nil {
+		defer web.close()
+	}
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR1, syscall.SIGUSR2)
 	defer signal.Stop(sigs)
@@ -356,6 +372,9 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 				if e = atomicJSON(c.StateFile, s); e != nil {
 					allow.Store(false)
 					return fmt.Errorf("state write failed; stopping: %w", e)
+				}
+				if web != nil {
+					web.publish(s)
 				}
 				if now.Sub(lastLog) >= time.Duration(c.LogIntervalSeconds)*time.Second {
 					b, _ := json.Marshal(s)

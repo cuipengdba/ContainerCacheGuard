@@ -22,6 +22,9 @@ type Config struct {
 	ExcludeNames                 []string `json:"exclude_names"`
 	CgroupPath                   string   `json:"cgroup_path"`
 	StateFile                    string   `json:"state_file"`
+	WebListen                    string   `json:"web_listen"`
+	WebTokenFile                 string   `json:"web_token_file"`
+	WebHistorySamples            int      `json:"web_history_samples"`
 	BusinessSignal               string   `json:"business_signal"`
 	SignalMaxAgeSeconds          int      `json:"signal_max_age_seconds"`
 	MaxBusinessP99MS             float64  `json:"max_business_p99_ms"`
@@ -66,7 +69,8 @@ func defaultConfig() Config {
 		Mode: "auto", Action: "observe", Paths: []string{}, AutoRoots: []string{}, ExcludePaths: []string{},
 		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
 		StateFile:    "/tmp/containercacheguard/status.json", SignalMaxAgeSeconds: 10,
-		IntervalMS: 1000, LogIntervalSeconds: 10, WarmupSeconds: 60, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
+		WebHistorySamples: 3600,
+		IntervalMS:        1000, LogIntervalSeconds: 10, WarmupSeconds: 60, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
 		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, CriticalMode: "pause", MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
 		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
 		DiscoverEntriesPerSecond: 500, MaxFiles: 150000, MaxDirectories: 20000, MaxRegions: 8192, MaxOperationsPerSecond: 1000,
@@ -157,6 +161,15 @@ func (c Config) validate() error {
 	}
 	if !filepath.IsAbs(c.StateFile) || (c.BusinessSignal != "" && !filepath.IsAbs(c.BusinessSignal)) {
 		return errors.New("state_file/business_signal 必须为绝对路径")
+	}
+	if c.WebHistorySamples < 60 || c.WebHistorySamples > 21600 {
+		return errors.New("web_history_samples 范围60..21600")
+	}
+	if c.WebTokenFile != "" && !filepath.IsAbs(c.WebTokenFile) {
+		return errors.New("web_token_file 必须为绝对路径")
+	}
+	if e := validateWebListen(c.WebListen, c.WebTokenFile); e != nil {
+		return e
 	}
 	return nil
 }
