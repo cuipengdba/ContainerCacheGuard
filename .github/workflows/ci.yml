@@ -22,16 +22,21 @@ jobs:
           go-version: '1.27.3'
           cache: false
       - name: Test and race detector
+        shell: bash
         run: |
+          set -euo pipefail
           go vet ./...
           go test -race -count=1 -v ./... | tee unit-results.log
       - name: Build static native binary
+        shell: bash
         env:
           CGO_ENABLED: '0'
         run: |
+          set -euo pipefail
           mkdir -p dist
           go build -trimpath -ldflags "-s -w -X main.version=0.1.0-rc.2 -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
           file dist/containercacheguard-linux-${{ matrix.arch }} | tee binary-info.txt
+          readelf -h dist/containercacheguard-linux-${{ matrix.arch }} > elf-header.txt
           ! readelf -l dist/containercacheguard-linux-${{ matrix.arch }} | grep -q INTERP
           ! readelf -d dist/containercacheguard-linux-${{ matrix.arch }} | grep -q NEEDED
       - name: CLI integration

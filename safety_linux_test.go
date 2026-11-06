@@ -128,7 +128,11 @@ func TestTruncateAndReplacedIdentity(t *testing.T) {
 	}
 }
 func TestStateLockAndPermissions(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "state")
+	d := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(d, 0700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(d, "state")
 	f, e := lockState(p)
 	if e != nil {
 		t.Fatal(e)
