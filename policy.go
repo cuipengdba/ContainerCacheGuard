@@ -7,7 +7,10 @@ type Metrics struct {
 	Cgroup           string    `json:"cgroup"`
 	Version          int       `json:"version"`
 	Current          int64     `json:"current_bytes"`
-	Limit            int64     `json:"limit_bytes"` // 0 means unlimited/unknown, never zero capacity
+	Limit            int64     `json:"limit_bytes"` // most restrictive visible limit; 0 means unlimited/unknown
+	AncestorCgroup   string    `json:"pressured_ancestor_cgroup,omitempty"`
+	AncestorCurrent  int64     `json:"pressured_ancestor_current_bytes"`
+	AncestorLimit    int64     `json:"pressured_ancestor_limit_bytes"`
 	File             int64     `json:"file_bytes"`
 	Shmem            int64     `json:"shmem_bytes"`
 	ActiveFile       int64     `json:"active_file_bytes"`
@@ -54,7 +57,7 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 	if m.OOMKill > oomBaseline {
 		return stop("CRITICAL", "new_oom_kill")
 	}
-	critical := m.Limit > 0 && float64(m.Current) >= float64(m.Limit)*c.MemoryCriticalRatio
+	critical := memoryAtRatio(m, c.MemoryCriticalRatio)
 	if critical && c.CriticalMode == "pause" {
 		return stop("CRITICAL", "memory_critical_stop_speculative_reclaim")
 	}
@@ -89,7 +92,7 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 		if max64(0, m.File-m.Shmem) <= d.CacheTarget {
 			return d
 		}
-		if c.Trigger == "pressure" && (m.Limit <= 0 || float64(m.Current) < float64(m.Limit)*c.MemoryHighRatio) {
+		if c.Trigger == "pressure" && !memoryAtRatio(m, c.MemoryHighRatio) {
 			return stop("IDLE", "waiting_memory_pressure")
 		}
 	}
@@ -104,6 +107,11 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 		d.Reason = "explicit_bounded_critical_reclaim"
 	}
 	return d
+}
+func memoryAtRatio(m Metrics, ratio float64) bool {
+	self := m.Limit > 0 && float64(m.Current) >= float64(m.Limit)*ratio
+	ancestor := m.AncestorLimit > 0 && float64(m.AncestorCurrent) >= float64(m.AncestorLimit)*ratio
+	return self || ancestor
 }
 func max64(a, b int64) int64 {
 	if a > b {

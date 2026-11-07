@@ -21,6 +21,7 @@ type Counters struct {
 	Regions               int      `json:"tracked_regions"`
 	Discovered            uint64   `json:"discovered_entries"`
 	Overflow              uint64   `json:"inventory_overflow"`
+	IndexRotations        uint64   `json:"index_rotations"`
 	Errors                uint64   `json:"errors"`
 	LastError             string   `json:"last_error,omitempty"`
 	ScannedBytes          int64    `json:"sampled_region_bytes"`
@@ -32,6 +33,7 @@ type Counters struct {
 	Ineffective           uint64   `json:"ineffective_advice"`
 	DeferredRetries       uint64   `json:"deferred_retries"`
 	Sweeps                uint64   `json:"inventory_sweeps"`
+	CompletedSweeps       uint64   `json:"completed_inventory_sweeps"`
 	Rate                  int64    `json:"current_advice_rate_bytes_per_second"`
 	HintEvents            uint64   `json:"hint_events"`
 	HintOverflows         uint64   `json:"hint_overflows"`
@@ -96,9 +98,11 @@ type engine struct {
 	dir                          *os.File
 	dirInfo                      dirEntry
 	nextSweep                    time.Time
+	sweepOpen                    bool
 	files                        []*fileEntry
 	known                        map[string]*fileEntry
 	cursor                       int
+	evictCursor                  int
 	regions                      map[regionKey]*region
 	queue                        []*region
 	qcursor                      int
@@ -173,11 +177,24 @@ func (e *engine) add(path string, rootDev uint64) {
 		}
 		return
 	}
+	n := &fileEntry{Path: path, ID: id}
 	if len(e.known) >= e.c.MaxFiles {
-		e.stats.Overflow++
+		// Keep a bounded working index while still visiting later files in a
+		// directory. A permanently full index would starve every file beyond
+		// the first MaxFiles entries on the next sweep as well.
+		if len(e.files) == 0 {
+			e.stats.Overflow++
+			return
+		}
+		e.evictCursor %= len(e.files)
+		old := e.files[e.evictCursor]
+		delete(e.known, old.Path)
+		e.files[e.evictCursor] = n
+		e.evictCursor = (e.evictCursor + 1) % len(e.files)
+		e.known[path] = n
+		e.stats.IndexRotations++
 		return
 	}
-	n := &fileEntry{Path: path, ID: id}
 	e.known[path] = n
 	e.files = append(e.files, n)
 }
@@ -197,10 +214,15 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 		}
 		e.nextSweep = now.Add(time.Duration(e.c.RescanSeconds) * time.Second)
 		e.stats.Sweeps++
+		e.sweepOpen = true
 	}
 	for time.Now().Before(deadline) && e.discovery.take(1) {
 		if e.dir == nil {
 			if len(e.dirs) == 0 {
+				if e.sweepOpen {
+					e.stats.CompletedSweeps++
+					e.sweepOpen = false
+				}
 				return
 			}
 			e.dirInfo = e.dirs[0]
@@ -230,6 +252,10 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 				e.failure(err)
 			}
 		}
+	}
+	if e.dir == nil && len(e.dirs) == 0 && e.sweepOpen {
+		e.stats.CompletedSweeps++
+		e.sweepOpen = false
 	}
 }
 func (e *engine) track(f *fileEntry, offset, length, res int64, now time.Time) {
@@ -359,7 +385,10 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	now := time.Now()
 	dutyRate := float64(e.c.WorkerBudgetMS) / 1000
-	if !allow.Load() && dutyRate > 0.005 {
+	// Explicit observation needs the configured discovery budget to measure
+	// coverage on large directories. Enforce mode still scans only slowly
+	// while a safety gate has denied new advice.
+	if e.c.Action != "observe" && !allow.Load() && dutyRate > 0.005 {
 		dutyRate = 0.005
 	}
 	e.duty.refill(now, dutyRate, dutyRate)

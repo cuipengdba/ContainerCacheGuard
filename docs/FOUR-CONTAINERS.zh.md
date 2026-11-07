@@ -1,13 +1,13 @@
 # DBS/HISDBS 与独立备份容器：部署和 Web 使用
 
-本页给运维人员一条可检查的接入路线。ContainerCacheGuard（下称 CCG）是常驻进程，不替代 PostgreSQL、DBS 或 `pg_basebackup`。示例为 PostgreSQL 18；把路径、端口、UID、资源限额和存储卷换成自己集群的实际值后使用。
+本页给运维人员一条可检查的接入路线。ContainerCacheGuard（下称 CCG）是常驻进程，不替代 PostgreSQL、DBS 或 `pg_basebackup`。当前94迁移与验证目标为 **PostgreSQL 14.19**；下列配置仍是接入设计，尚未表示四容器已在94完成部署与验收。
 
 ## 为什么是四个容器
 
 | 容器 | 业务进程 | 读写的数据 | CCG 管的文件范围 | CCG 读取的内存账本 |
 | --- | --- | --- | --- | --- |
 | DBS 业务 | PostgreSQL、现有 DBS 程序 | DBS 的 PGDATA | DBS 的 `PGDATA/base` | DBS 容器 cgroup |
-| DBS 备份 | PG18 `pg_basebackup`、`pg_verifybackup` 等客户端 | 只读连接 DBS 的 Unix Socket，写独立备份卷 | DBS 备份输出目录 | DBS 备份容器 cgroup |
+| DBS 备份 | PG14 `pg_basebackup`、`pg_verifybackup` 等客户端 | 只读连接 DBS 的 Unix Socket，写独立备份卷 | DBS 备份输出目录 | DBS 备份容器 cgroup |
 | HISDBS 业务 | PostgreSQL、现有 HISDBS 程序 | HISDBS 的 PGDATA | HISDBS 的 `PGDATA/base` | HISDBS 容器 cgroup |
 | HISDBS 备份 | 同上 | 只读连接 HISDBS 的 Unix Socket，写另一备份卷 | HISDBS 备份输出目录 | HISDBS 备份容器 cgroup |
 
@@ -41,6 +41,7 @@
   "mode": "paths",
   "action": "observe",
   "paths": ["/backup"],
+  "exclude_names": ["lost+found"],
   "cgroup_path": "",
   "state_file": "/run/ccg-output/status.json",
   "cache_target_bytes": 1073741824,
@@ -49,7 +50,9 @@
 }
 ```
 
-配置只写出需要覆盖的字段，其余使用 `init-config` 所示默认值。2 GiB/1 GiB 是实验软目标，**不是推荐生产阈值或硬上限**。根据容器 limit、节点余量、活跃页、业务 p99 和备份时长定标。`PGDATA/base` 中也可能有热点；建议从只观察和低复用备份产物开始，排除已识别热点后才对数据库端启用 enforce。`global`、WAL 和事务目录默认排除，不要为追求更大回收数字解除这些保护。
+配置只写出需要覆盖的字段，其余使用 `init-config` 所示默认值。2 GiB/1 GiB 是实验软目标，**不是推荐生产阈值或硬上限**。根据容器 limit、节点余量、活跃页、业务 p99 和备份时长定标。`PGDATA/base` 中也可能有热点；建议从只观察和低复用备份产物开始，排除已识别热点后才对数据库端启用 enforce。数据库源端的 `global`、WAL 和事务目录默认排除，不要为追求更大回收数字解除这些保护。
+
+**源端与输出端的排除策略不同。** 数据库源端保留默认的 `pg_wal`/`global` 等保护目录；备份输出端的 `/backup` 是成品副本，例子显式把 `exclude_names` 改为仅 `lost+found`，因此会覆盖输出副本中的 `pg_wal`。在94已校验的DBS备份中，`base` 约29GiB、`pg_wal` 约26GiB；若输出端沿用默认排除列表，约一半备份字节不会进入治理范围。`exclude_names` 是**整体替换**默认列表，不是追加。输出端仍要等待文件修改保护期，并在脏页、IO、业务延迟等保护满足时才发建议；必须实测写入中的WAL段是否被跳过、备份校验是否通过及读盘反弹情况。此例目前仍为`observe`，不能把配置说明当作已验证的enforce效果。
 
 ## 在容器里启动
 
@@ -83,7 +86,7 @@ pg_verifybackup /backup/20261107-full
 
 ## 打开实时页面
 
-每个容器的 `127.0.0.1:9898` 只在自己的网络命名空间可见。具有 Kubernetes 权限的运维人员在自己的终端执行，例如：
+每个容器的 Web 监听地址需按 Pod 网络设置。**94当前 DBS/HISDBS 均为 `hostNetwork: true`，所以两者共享宿主机网络命名空间，不能同时绑定 `127.0.0.1:9898`。** 四实例须选择互不冲突的监听端口，并由安全的本地端口转发或鉴权代理访问。普通 Pod 可按下例使用端口转发：
 
 ```sh
 kubectl -n <namespace> port-forward pod/<hisdbs-pod> 9898:9898
@@ -104,4 +107,4 @@ kubectl -n <namespace> port-forward pod/<hisdbs-pod> 9898:9898
 4. 每 12 小时生成统计图和说明；48 小时全程保留原始采样、Kubelet `Evicted` 事件、OOM 与容器重启记录。完整备份必须通过 `pg_verifybackup`，并做独立恢复演练。
 5. 若 `active_file` 未复现、CCG 没发出建议、业务延迟恶化、读盘反弹或旧 vmtouch 同时运行，不宣称问题已解决。有限测试只能证明明确压力范围内的结果，不能保证所有未来负载下“百分之百不驱逐”。
 
-94 的隔离实验为了 PostgreSQL 18 目标使用升级后的数据库副本。原环境仍是 PostgreSQL 14，且有不同的节点内存、Patroni/HBP/etcd 配置；生产模式的 DBS 二进制在缺少这些外围状态时会停止数据库。实验保留相同的 DBS/HISDBS 二进制但关闭其集群联动，使用外部定时脚本驱动备份。因此该实验能验证备份与缓存通路和真实 Kubelet 压力，不能冒称完整生产功能等价。
+94目前已经通过YsP部署与171同标签的DBS/HISDBS镜像，均运行PostgreSQL 14.19；HISDBS仍是空库，DBS和HISDBS真实备份数据尚在校验/迁移。94约30GiB内存、171约61GiB，底层盘和节点余量也不同。只有数据库恢复、业务功能、备份容器接入、持续压力和回退演练均通过后，才能把此页的设计改成94已验证部署说明。

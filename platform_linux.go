@@ -424,6 +424,7 @@ func (r *metricReader) sample(c Config) Metrics {
 	}
 	// Respect visible ancestors' limits; hidden ancestors are not observable.
 	if m.Version == 2 {
+		var ancestorRatio float64
 		for p := filepath.Dir(r.path); p != "/" && p != "."; p = filepath.Dir(p) {
 			v, e := number(filepath.Join(p, "memory.max"))
 			if e != nil {
@@ -431,6 +432,15 @@ func (r *metricReader) sample(c Config) Metrics {
 			}
 			if v > 0 && (m.Limit == 0 || v < m.Limit) {
 				m.Limit = v
+			}
+			if v > 0 {
+				current, currentError := number(filepath.Join(p, "memory.current"))
+				if currentError == nil && float64(current)/float64(v) > ancestorRatio {
+					ancestorRatio = float64(current) / float64(v)
+					m.AncestorCgroup = p
+					m.AncestorCurrent = current
+					m.AncestorLimit = v
+				}
 			}
 		}
 	}

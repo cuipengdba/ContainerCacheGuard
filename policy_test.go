@@ -81,3 +81,30 @@ func TestBoundedCriticalStillHonorsSafety(t *testing.T) {
 		t.Fatal("critical bypassed OOM guard")
 	}
 }
+
+func TestSharedAncestorPressureUsesPairedUsage(t *testing.T) {
+	c := defaultConfig()
+	c.Action = "enforce"
+	c.Trigger = "pressure"
+	c.WarmupSeconds = 0
+	c.CacheTargetBytes = 100 * MiB
+	now := time.Now()
+	m := Metrics{
+		Current: 100 * MiB, Limit: 1024 * MiB, File: 300 * MiB,
+		AncestorCurrent: 900 * MiB, AncestorLimit: 1024 * MiB,
+	}
+	d := decide(c, m, now.Add(-time.Hour), now, false, 0)
+	if d.State != "CONTROL" || !d.Allow {
+		t.Fatal("sibling usage did not trigger pressure policy", d)
+	}
+	m.AncestorCurrent = 1000 * MiB
+	d = decide(c, m, now.Add(-time.Hour), now, false, 0)
+	if d.State != "CRITICAL" || d.Allow {
+		t.Fatal("shared parent near limit did not stop speculative work", d)
+	}
+	m.AncestorCurrent = 200 * MiB
+	d = decide(c, m, now.Add(-time.Hour), now, false, 0)
+	if d.State != "IDLE" || d.Allow {
+		t.Fatal("low self and parent usage falsely triggered pressure", d)
+	}
+}

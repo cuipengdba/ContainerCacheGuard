@@ -45,7 +45,7 @@
 
 ## 索引或访问提示溢出
 
-`inventory_overflow` 或 `hint_overflows` 上升表示覆盖/提示受到预算限制。提示丢失不直接损坏文件；普通补扫仍在，但控制可能滞后。先检查实际文件数、目录数、工作时间与CPU，再调整max_files、max_directories、max_regions、max_hint_files或发现节奏。增加上限会增加内存成本，不能只把数字无限放大。
+`index_rotations` 上升表示文件数量超过有界工作索引，旧索引会轮换以便后续文件进入；`completed_inventory_sweeps` 为0表示尚未完整遍历目录，不能声称已覆盖所有文件。`inventory_overflow` 或 `hint_overflows` 上升表示其它目录/候选/提示预算受到限制。提示丢失不直接损坏文件；普通补扫仍在，但控制可能滞后。先检查实际文件数、目录数、工作时间与CPU，再调整max_files、max_directories、max_regions、max_hint_files或发现节奏。增加上限会增加内存成本，不能只把数字无限放大。
 
 ## 怎样确认停住了
 

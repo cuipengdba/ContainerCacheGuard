@@ -27,7 +27,7 @@
 | `paths` | `[]` | paths 模式的一组绝对路径。支持目录或普通文件，禁止根目录及系统目录；不跟随符号链接 |
 | `auto_roots` | `[]` | auto 模式额外登记的目录，不取代自动发现；要严格限定范围请使用 paths |
 | `exclude_paths` | `[]` | 排除路径及其子树；优先于发现与包含规则 |
-| `exclude_names` | 见生成配置 | 按每级目录/文件的完整名字排除。默认含 WAL、global、事务/复制/共享内存相关 PG 目录；自定义数组会替换默认数组 |
+| `exclude_names` | 见生成配置 | 按每级目录/文件的完整名字排除。数据库源端默认保护 WAL、global、事务/复制/共享内存相关 PG 目录；自定义数组会整体替换默认数组。备份输出卷应独立配置，是否纳入成品副本的 WAL 必须依据写入保护及校验实测决定 |
 | `cgroup_path` | 自动检测 | 本容器 memory cgroup；sidecar 应显式指定业务容器的只读挂载路径。必须是真实 cgroup 文件系统 |
 | `state_file` | `/tmp/containercacheguard/status.json` | 状态输出和同名 `.lock` 文件；父目录必须属于当前 UID，权限 0700。不同受控范围使用不同目录 |
 | `web_listen` | 空，关闭 | 内置只读 Web 的 TCP 监听地址，例如 `127.0.0.1:9898`。端口须可用；非回环地址必须设置 token 文件 |
@@ -84,7 +84,7 @@ io.stat 在 device-mapper 等堆叠存储上可能同时列出逻辑盘和物理
 | `initial_reclaim_bytes_per_second` | `4194304`（4MiB/s） | 起始速率；健康时每30秒增加这一档，发现代价或无效则降低 |
 | `region_bytes` | `4194304`（4MiB） | 单次文件范围；64KiB整数倍，64KiB..64MiB，适配4K/64K页大小；不会建议释放末尾不满页的部分 |
 | `discover_entries_per_second` | `500` | 新目录条目发现预算；限额后有滞后，状态不能解释成完整即时目录 |
-| `max_files` | `150000` | 文件索引上限，超出记录 inventory_overflow，不无限增内存 |
+| `max_files` | `150000` | 文件工作索引上限；超过后轮换旧索引并累计 `index_rotations`，不无限增内存。轮换不保证所有文件在同一时刻被采样 |
 | `max_directories` | `20000` | 待遍历目录队列上限 |
 | `max_regions` | `8192` | 候选、复查和保护区域记录上限；不是保存全库位图 |
 | `max_operations_per_second` | `1000` | 区域处理次数预算；一次区域处理可能涉及多个系统调用，不是精确 syscall 计数 |
@@ -93,7 +93,7 @@ io.stat 在 device-mapper 等堆叠存储上可能同时列出逻辑盘和物理
 | `max_hint_files` | `2048` | 访问提示对应的文件队列上限，范围1..100000；不随业务事件无限增长 |
 | `max_cpu_percent` | `5` | 自身进程上一个采样窗口超过单核5%时暂停工作；这是反馈保护，不是内核 CPU 硬限额 |
 | `max_rss_bytes` | `134217728`（128MiB） | 自身 RSS 超过该值暂停扫描；同时设置更低的 Go 内存软目标。不是进程硬内存上限 |
-| `worker_budget_ms` | `25` | 每秒工作时间预算；分最多5毫秒的小片执行。不允许释放时最多使用5毫秒/秒做慢速观察。阻塞系统调用不能保证严格按时返回 |
+| `worker_budget_ms` | `25` | 每秒工作时间预算；分最多5毫秒的小片执行。显式`observe`使用所配预算来测量大目录覆盖，仍受自身CPU/RSS保护；`enforce`被安全门拦住时最多使用5毫秒/秒做慢速观察。阻塞系统调用不能保证严格按时返回 |
 | `max_reappearance_ratio` | `0.25` | 释放后再次驻留量超过观察下降量25%时保护该范围，并降低回收速率 |
 | `recheck_seconds` | `5` | 计划在释放后5秒起复查；预算不足或内核阻塞时可能延迟 |
 
@@ -107,7 +107,7 @@ io.stat 在 device-mapper 等堆叠存储上可能同时列出逻辑盘和物理
 
 当前真实规模验证使用cgroup v2；v1分支读取内存用量及缓存统计，但没有据此完成v1性能/故障验收。新增OOM kill的保护依赖v2 memory.events，不能把v1中未采集的OOM计数当作“零OOM证据”。
 
-v2读取可见祖先的更小限额用于保守估算，但不会自动追踪全部兄弟cgroup用量，也无法看见被命名空间隐藏的祖先。若约束实际施加在Pod父组，应明确监控相应组或提供外部业务/节点信号；单容器比例不是父组剩余内存保证。
+v2读取可见祖先的有限额与对应`memory.current`，记录占用比例最高的父组，并将本容器、父组两种比例都用于高水位/临界退让。`limit_bytes`仍表示可见范围内最严限额，`current_bytes`只表示本容器，不能直接相除后当父组占用比例；应看`pressured_ancestor_current_bytes / pressured_ancestor_limit_bytes`。若cgroup命名空间隐藏了祖先，或者Kubelet另有节点驱逐阈值，这些本地数字仍不保证安全，需同时看节点可用内存及实际驱逐事件。
 
 ## 看懂结果
 
@@ -115,7 +115,7 @@ v2读取可见祖先的更小限额用于保守估算，但不会自动追踪全
 - `observed_net_reduction_bytes`：建议前后观察到的驻留净下降，线上可能混入自然回收/并发访问，不作严格因果归因。
 - `observed_reappeared_bytes`：之后复查的驻留回升，可能是业务读取或预读，不是精确应用缺页数。
 - `sampled_resident_bytes_cumulative`：累计采样结果，重复采样会重复计数，**绝不能当成当前总缓存**。
-- `indexed_files`、`tracked_regions`、`inventory_overflow`：告诉你索引覆盖和预算是否不足。文件内容不会被守护进程读取来判断冷热。
+- `indexed_files`、`index_rotations`、`completed_inventory_sweeps`：分别是当前工作索引大小、索引轮换次数和完整目录遍历次数。索引轮换次数上升表明文件数超过工作索引；完整遍历次数为0时不能声称覆盖整棵目录。`inventory_overflow` 仍记录目录队列或区域等其它预算溢出。文件内容不会被守护进程读取来判断冷热。
 - `degraded`：例如 PSI 缺失、没有 kubelet Summary、其它缓存只诊断。未知不等于健康。
 - `worker_busy_seconds`：单工作队列执行延迟；超过5秒会停止派发新的建议，不启动替代工作线程制造堆积。
 

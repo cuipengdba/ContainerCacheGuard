@@ -196,7 +196,7 @@ func TestEngineObserveAndBoundedIndex(t *testing.T) {
 	defer eng.close()
 	var allow atomic.Bool
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && eng.stats.Overflow == 0 {
+	for time.Now().Before(deadline) && eng.stats.IndexRotations == 0 {
 		eng.work(context.Background(), &allow)
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -206,8 +206,8 @@ func TestEngineObserveAndBoundedIndex(t *testing.T) {
 	if eng.stats.AdviceBytes != 0 {
 		t.Fatal("observe issued advice")
 	}
-	if eng.stats.Overflow == 0 {
-		t.Fatal("index limit not exercised")
+	if eng.stats.IndexRotations == 0 {
+		t.Fatal("bounded index did not rotate to later files")
 	}
 }
 func TestAdviceRequiresAlignedNonempty(t *testing.T) {
