@@ -15,6 +15,21 @@
 
 **源端读盘发生在 PostgreSQL 服务端，输出写盘发生在 `pg_basebackup` 客户端。** 两端各运行一个 CCG 后，自动探测得到各自容器的 cgroup，不必从备份容器跨 cgroup 猜测数据库内存。业务容器 CCG 对本容器 PGDATA 发 `POSIX_FADV_DONTNEED` 建议；备份容器 CCG 处理其输出卷。若把源端 CCG 改放到备份容器，必须只读挂载同一实际 PGDATA 文件并显式监控业务 cgroup；核对设备号/inode/UID，不能用复制副本冒充同一页缓存。
 
+### 94 当前的跨 Pod 挂载，以及为何没有合并到同一个 Pod
+
+94 的数据库业务容器和备份容器**不是同一个 Pod**。两个业务 Pod 沿用 YsP 原部署；`ccg-test-dbsbackup`、`ccg-test-hisdbsbackup` 是等待 YsP 正式登记前的临时备份 Pod。四个 Pod 固定到同一节点。压力生成器另作为94宿主机的systemd服务运行，通过本机Unix Socket发送SQL；事务由业务Pod中的PostgreSQL执行，生成器只写独立`ccg_loadtest`库。
+
+| 数据流 | 94 宿主机目录 | 备份容器内 | 业务容器内 |
+| --- | --- | --- | --- |
+| DBS Socket | `/opt/PUC-784/dbspod/postgresql/pgdata` | 只读`/pgsocket`；`PGHOST=/pgsocket`、`PGPORT=14005` | 原有实际PGDATA和Socket目录 |
+| DBS 备份输出 | `/home/ccg-backups/dbs` | 可写`/backup` | 同一宿主目录另挂入业务容器；原厂`basebackup`路径经符号链接指向该目录 |
+| HISDBS Socket | `/opt/PUC-784/hisdbspod/postgresql/pgdata` | 只读`/pgsocket`；`PGHOST=/pgsocket`、`PGPORT=16911` | 原有实际PGDATA和Socket目录 |
+| HISDBS 备份输出 | `/opt/PUC-784/ccg-backups/hisdbs` | 可写`/backup` | 同一宿主目录另挂入业务容器；原厂`basebackup`路径经符号链接指向该目录 |
+
+`hostPath`共享的是**同一节点的文件和inode**，不是把数据在两个Pod之间复制。备份Pod拥有独立的低优先级、1GiB内存request与2GiB内存limit；节点压力下可以优先停止或驱逐备份Pod，而不把数据库Pod一起驱逐。若改成同Pod双容器，使用Pod内共享卷与Socket会更简便，但kubelet驱逐该Pod时数据库和备份会一起离开，备份容器也不能单独设较低Pod优先级。当前以保护数据库可用性为主，所以先验证独立Pod。这个选择仍须以现场驱逐记录、备份完成率和数据库时延复核，不能仅凭拓扑推断安全。
+
+此`hostPath`方案仅适用于94的**单节点、固定调度**实验。多节点生产环境要重新设计共享存储与本地Socket：跨节点不能用这种Unix Socket；备份Pod漂移后也不能假定另一节点拥有同一备份目录。两个业务容器原厂`start.sh`会递归`chown /opt/postgresql`，因此94把共享备份卷挂在数据库树外，并用符号链接保留原厂路径，避免重启时遍历大量备份文件。正式YsP服务导入与原厂调度衔接尚未验收。
+
 ## 先准备四个范围
 
 下面的路径只是示意，`state_file` 的父目录由运行 UID 拥有，权限 0700；两个容器不能共用一个状态锁。DBS/HISDBS 可以使用相同的**容器内**路径，但它们应挂载各自的实际卷。
@@ -115,8 +130,8 @@ kubectl -n <namespace> port-forward pod/<hisdbs-pod> 9898:9898
 4. 每 12 小时生成统计图和说明；48 小时全程保留原始采样、Kubelet `Evicted` 事件、OOM 与容器重启记录。完整备份必须通过 `pg_verifybackup`，并做独立恢复演练。
 5. 若 `active_file` 未复现、CCG 没发出建议、业务延迟恶化、读盘反弹或旧 vmtouch 同时运行，不宣称问题已解决。有限测试只能证明明确压力范围内的结果，不能保证所有未来负载下“百分之百不驱逐”。
 
-截至2026-11-08 14:30，94已通过YsP部署与171同标签的DBS/HISDBS镜像，均运行PostgreSQL 14.19；HISDBS的当日完整备份已在94原生校验、隔离恢复和切换活动库，DBS的当日备份已原生校验但仍在隔离恢复，尚未切换活动库。94约30GiB内存、171约61GiB，底层盘和节点余量也不同。只有数据库恢复、业务功能、备份容器接入、持续压力和回退演练均通过后，才能把此页的设计改成94已验证部署说明。
+截至2026-11-08 16:45，94已通过YsP部署与171同标签的DBS/HISDBS镜像，均运行PostgreSQL 14.19；两套当日完整种子备份均在94通过原生校验、隔离恢复并切换活动库。两个业务Pod已接入CCG`observe`；两个临时备份Pod也运行CCG`observe`，**不是YsP正式备份服务**。DBS在持续模拟压力下的新全备已完成`pg_basebackup`，其原生校验、独立恢复、HISDBS新全备、CCG`enforce`效果、正式YsP接入与回退演练仍待验收。94约30GiB内存、171约61GiB，不能声称等规格对照。
 
 94的压测辅助程序还提供`--min-mem-available-gib`（默认5）和`--min-free-gib`（默认64）。每轮启动前检查节点可用内存和PGDATA所在文件系统剩余空间；运行中每约5秒检查内存，低于阈值即终止该轮`pgbench`并记录`paused_low_memory`，恢复余量后继续。暂停时段不能算成达标负载时段。这个保护只是实验熔断，不代替Kubernetes驱逐事件、业务延迟和容器OOM监测。
 
-模拟程序默认`--payload-mode=compressible`，适合低成本冒烟，但重复文本容易被PostgreSQL压缩，产生的WAL可能远低于源端。`--payload-mode=random`只在独立的`ccg_loadtest`库中启用`pgcrypto`并生成难压缩载荷，可用`--event-bytes`、`--update-bytes`和`--rate`校准事务、行变更及WAL三类速率。随机模式把测试列设为行内存储，避免TOAST元组把`pg_stat_database.tup_inserted`虚高；单行载荷上限为6000字节。94在2026-11-08的120秒DBS标定中以110 TPS、每事务3次插入/4次更新、2048/4096字节随机载荷得到约111.1提交/s、332.6插入元组/s、443.6更新元组/s、2.78 MB/s WAL。源端备份时段相应中位数约105.4、367.2、452.5及2.86 MB/s；这是接近的**聚合指标**，不是原业务SQL或gissync数据流的逐条重放，也尚未证明长期备份并发安全。持续运行时需监控独立测试库增长和磁盘余量，不能只看TPS。
+模拟程序默认`--payload-mode=compressible`，适合低成本冒烟，但重复文本容易被PostgreSQL压缩，产生的WAL可能远低于源端。`--payload-mode=random`只在独立的`ccg_loadtest`库中启用`pgcrypto`并生成难压缩载荷，可用`--event-bytes`、`--update-bytes`和`--rate`校准事务、行变更及WAL三类速率。随机模式把测试列设为行内存储，避免TOAST元组把`pg_stat_database.tup_inserted`虚高；单行载荷上限为6000字节。94在2026-11-08的120秒DBS标定中以110 TPS、每事务3次插入/4次更新、2048/4096字节随机载荷得到约111.1提交/s、332.6插入元组/s、443.6更新元组/s、2.78 MB/s WAL。源端备份时段相应中位数约105.4、367.2、452.5及2.86 MB/s；这是接近的**聚合指标**，不是原业务SQL或gissync数据流的逐条重放，也尚未证明长期备份并发安全。持续运行时需监控独立测试库增长和磁盘余量，不能只看TPS。当前辅助程序在测试库达到默认12GiB时于轮次之间清空实验事件表；若其余空间增长不能因此降低，便暂停并报告，不修改业务`clouddb`。此低频TRUNCATE也要在结果中标记。
