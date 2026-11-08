@@ -86,6 +86,8 @@ pg_verifybackup /backup/20261107-full
 
 仓库的 [`deploy/backup-once.sh`](../deploy/backup-once.sh) 是一次性备份执行脚本，供独立备份容器或调度任务调用；它**不是**CCG daemon，也不自动替换DBS原有调度。运行前设置`BACKUP_ROOT`（已挂载的输出目录）、`PGHOST`（共享的Unix Socket目录）、`PGPORT`、`PGUSER`（脚本默认`replica`，94候选包指定独立的`ccg_backup`复制用户）和`MAX_RATE`（默认`60M`），再传可选的日期备份名，例如`20261108-lab`。94候选包从各自的Kubernetes Secret注入`PGPASSWORD`；密码不能放在脚本、镜像或公开配置中。脚本用`flock`拒绝并发，在隐藏的临时目录完成PG14 `pg_basebackup`与`pg_verifybackup`，两者成功后才原子改名为正式备份目录，并保存清单SHA256；失败时保留带`.inprogress-`前缀的目录供诊断，绝不可当成有效备份，也要有容量告警和人工清理规则。恢复演练仍是独立验收步骤。
 
+[`deploy/backup-supervisor.sh`](../deploy/backup-supervisor.sh)只维持备份容器中的CCG常驻；CCG失败后独立重试，不重启整个Pod，避免中断正在运行的备份。它目前**不会自动按时发起备份**。94的候选包也不把CCG状态作为Kubernetes liveness条件；监控必须单独发现CCG故障并告警。外部监控页使用各自的认证令牌，不能裸露在公网。
+
 原 DBS 内置的 03:00 备份调度若仍在业务容器调用 `pg_basebackup`，就没有真正分离。已检查本地 DBS 源码：`DbUtil.startUp()`总会注册备份定时任务，`mod_phy_backup_time`只改变时刻，没有关闭开关；当当天备份目录存在且`backup.conf`的状态为`ok`时，`PostgresqlUtil.backup()`才跳过。因此不能只把新容器装上就声称分离，也不能让它在另一目录生成重复的全备。接入可选两条路线：给DBS增加明确的外部备份委托接口；或使备份容器在DBS认得的共享目录完成校验后，原子登记DBS格式的备份元数据，再把DBS原调度放在不会与新备份重叠的兜底时段。后一条路线必须测试失败、超时、重启及恢复选择，不可提前标记`ok`。94当前候选包尚未做到自动调度与元数据对接；从备份容器手动运行只验证数据通路，**不等于DBS自动任务链已经迁移验收**。
 
 ## 打开实时页面
