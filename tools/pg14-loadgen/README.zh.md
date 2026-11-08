@@ -13,7 +13,7 @@ python3 target94_loadgen.py --role dbs --rate 100 --clients 4 --target94 \
 | 参数 | 含义 |
 | --- | --- |
 | `--role dbs\|hisdbs` | 选择94上现有PG14二进制、Unix Socket目录和端口；当前路径是94的`/opt/PUC-784`，不能直接照搬其它节点。 |
-| `--rate` | pgbench全局目标事务数/秒；实际完成数因泊松调度、业务延迟而波动。 |
+| `--rate` | pgbench全局目标事务数/秒，允许0.1–1000，可写`0.5`模拟低频事务；实际完成数因泊松调度、业务延迟而波动。 |
 | `--clients` | 并发连接数，默认4，允许1–32。 |
 | `--round-seconds` | 每轮运行秒数，默认3600；轮间自动记录结果并继续。 |
 | `--inserts-per-tx`、`--updates-per-tx` | 每事务实验行数，默认3和4；用来逼近171只读观测的插入/更新计数。 |

@@ -100,7 +100,7 @@ def script_text(state_rows, inserts, updates, event_bytes, update_bytes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role", choices=ROLES, required=True)
-    parser.add_argument("--rate", type=int, required=True, help="target committed transactions per second")
+    parser.add_argument("--rate", type=float, required=True, help="target committed transactions per second")
     parser.add_argument("--clients", type=int, default=4)
     parser.add_argument("--round-seconds", type=int, default=3600)
     parser.add_argument("--state-rows", type=int, default=100000)
@@ -120,7 +120,7 @@ def main():
     if (not args.target94 or not Path("/opt/PUC-784").is_dir()
             or "10.110.32.94/" not in addresses):
         parser.error("run only on the authorized 94 target with --target94")
-    if not 1 <= args.rate <= 1000 or not 1 <= args.clients <= 32 or not 60 <= args.round_seconds <= 86400:
+    if not 0.1 <= args.rate <= 1000 or not 1 <= args.clients <= 32 or not 60 <= args.round_seconds <= 86400:
         parser.error("rate/clients/round-seconds outside bounded lab range")
     if not 1000 <= args.state_rows <= 1000000 or not 1 <= args.inserts_per_tx <= 20 or not 1 <= args.updates_per_tx <= 20:
         parser.error("state rows or rows-per-transaction outside bounded lab range")
