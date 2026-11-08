@@ -2,7 +2,8 @@
 """Bounded PostgreSQL 14 write load for the authorized 10.110.32.94 lab.
 
 This is an auxiliary experiment tool, not part of the cache-control daemon.
-It creates and writes only the ccg_load schema in the selected clouddb.
+It creates a separate ccg_loadtest database, preserving clouddb's migrated
+business schemas and relation counts.
 """
 
 import argparse
@@ -21,6 +22,7 @@ ROLES = {
     "dbs": ("/opt/PUC-784/dbspod/postgresql/pgsql", "/opt/PUC-784/dbspod/postgresql/pgdata", 14005),
     "hisdbs": ("/opt/PUC-784/hisdbspod/postgresql/pgsql", "/opt/PUC-784/hisdbspod/postgresql/pgdata", 16911),
 }
+TEST_DATABASE = 'ccg_loadtest'
 stop = False
 
 
@@ -46,10 +48,18 @@ def as_postgres(argv):
     return ["setpriv", "--reuid=999", "--regid=998", "--clear-groups", *map(str, argv)]
 
 
-def sql(pg, sock, port, statement):
+def sql(pg, sock, port, statement, database=TEST_DATABASE):
     return run(as_postgres([pg / "bin/psql", "-XAtw", "-v", "ON_ERROR_STOP=1",
-                            "-h", sock, "-p", port, "-U", "postgres", "-d", "clouddb",
+                            "-h", sock, "-p", port, "-U", "postgres", "-d", database,
                             "-c", statement]), pg_env(pg), 180)
+
+
+def ensure_database(pg, sock, port):
+    found = sql(pg, sock, port,
+                f"SELECT 1 FROM pg_database WHERE datname='{TEST_DATABASE}'",
+                database='postgres').strip()
+    if found != '1':
+        sql(pg, sock, port, f'CREATE DATABASE {TEST_DATABASE}', database='postgres')
 
 
 def prepare(pg, sock, port, state_rows):
@@ -67,8 +77,9 @@ def prepare(pg, sock, port, state_rows):
 
 
 def counters(pg, sock, port):
-    query = ("SELECT xact_commit,tup_inserted,tup_updated,pg_database_size('clouddb'),"
-             "wal_bytes FROM pg_stat_database,pg_stat_wal WHERE datname='clouddb'")
+    query = ("SELECT xact_commit,tup_inserted,tup_updated,"
+             f"pg_database_size('{TEST_DATABASE}'),wal_bytes "
+             f"FROM pg_stat_database,pg_stat_wal WHERE datname='{TEST_DATABASE}'")
     values = sql(pg, sock, port, query).strip().splitlines()[-1].split('|')
     return dict(zip(('commits', 'inserts', 'updates', 'database_bytes', 'wal_bytes'),
                     map(int, values)))
@@ -122,12 +133,13 @@ def main():
     if not (pg / "bin/pgbench").is_file() or not sock.is_dir():
         parser.error("PG14 binaries or socket directory missing")
     version = run(as_postgres([pg / "bin/psql", "-XAtw", "-h", sock, "-p", port,
-                               "-U", "postgres", "-d", "clouddb", "-c", "SHOW server_version_num"]),
+                               "-U", "postgres", "-d", "postgres", "-c", "SHOW server_version_num"]),
                   pg_env(pg), 30).strip().splitlines()[-1]
     if not version.startswith("14"):
         parser.error("target is not PostgreSQL 14")
     args.report_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(args.report_dir, 0o700)
+    ensure_database(pg, sock, port)
     prepare(pg, sock, port, args.state_rows)
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
@@ -150,7 +162,7 @@ def main():
             cmd = as_postgres([pg / "bin/pgbench", "-n", "-c", args.clients,
                                "-j", min(args.clients, 4), "-R", args.rate,
                                "-T", args.round_seconds, "-P", 60, "-f", script,
-                               "-h", sock, "-p", port, "-U", "postgres", "clouddb"])
+                               "-h", sock, "-p", port, "-U", "postgres", TEST_DATABASE])
             started = time.time()
             process = subprocess.Popen(cmd, env=pg_env(pg), stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, text=True, cwd="/tmp")

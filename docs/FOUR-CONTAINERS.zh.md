@@ -67,22 +67,26 @@ containercacheguard run --config /etc/ccg/source.json
 
 `run` 在前台常驻。用原有 supervisor 管理它，保持 PostgreSQL/DBS 的退出和信号处理。若现有镜像由 `/root/start.sh` 启动，应在独立实验环境检查该脚本何时创建目录、切换 UID 和启动 DBS，再加入 CCG 子进程；不能简单把第二个永久命令接在 `start.sh` 末尾。就绪探针应同时确认数据库/DBS 接口和 `containercacheguard status` 的采样新鲜度，否则 Pod `Running` 可能掩盖控制进程已退出。
 
+仓库提供[`deploy/business-supervisor.sh`](../deploy/business-supervisor.sh)作为**待四容器实测的接入候选**：它先检查CCG配置，再启动原厂`/root/start.sh`和CCG；CCG异常退出时，间隔15秒独立重启CCG，保留业务进程；Pod停止时向原厂启动脚本转发TERM。94上用虚拟业务和反复退出的虚拟CCG验证过这一信号/重启关系，尚未验证真实DBS重启全过程。部署时仍需为CCG状态单独告警，避免它持续失败而业务Pod看似健康。
+
 旧 DBS 代码有多个硬编码 `vmtouch` 路径，涉及备份、同步和源端 `releaseCache`。在 observe 阶段可并存以看现状，但无法把下降归因于 CCG；**enforce 阶段同一范围只能有一个回收执行者**。若现有 DBS 发行包没有关闭旧清理的配置开关，需要做明确的 DBS 接入改造，并验证备份/恢复退出码和异常路径。把 `vmtouch` 换成静默返回成功的空命令会掩盖问题，不应采用。`nocache` 若仍包装某个实际命令，也要核对其进程生命周期与缓存范围。
 
 ## 备份容器怎样连接 PostgreSQL
 
-将数据库的 Unix Socket **目录**共享给对应备份容器；备份输出使用独立 PVC。备份容器无需写 PGDATA，也无需共享数据库网络命名空间。Socket 目录权限及 PostgreSQL `pg_hba.conf` 的 `local replication` 规则应经过实际验证。示例：
+将数据库的 Unix Socket **目录**共享给对应备份容器；备份输出使用独立挂载卷。94 的候选部署用各自的主机目录挂载做实验，生产可改用有容量与故障隔离能力的 PVC。备份容器无需写 PGDATA，也无需共享数据库网络命名空间。当前 94 的 Socket 位于 PGDATA 内，因此候选部署只读挂载整个目录；应限制备份容器权限，后续可把 Socket 改到专用共享目录。Socket 目录权限及 PostgreSQL `pg_hba.conf` 的 `local replication` 规则应经过实际验证。示例：
 
 ```sh
-pg_basebackup -F p -P -v --checkpoint=fast -X s \
+pg_basebackup -F p -P -v --checkpoint=spread -X s \
   -h /run/pg-socket -p 5432 -U replica \
   -D /backup/20261107-full --max-rate=60M
 pg_verifybackup /backup/20261107-full
 ```
 
-这与 DBS 当前 PostgreSQL 全量备份调用的关键参数一致；`--max-rate` 负责备份数据传输的限速，**不是全盘 IO 硬上限**，WAL 流、校验和业务写入仍会增加 IO。输出目录创建后才会被路径发现；初始峰值要计入余量。一次完整备份结束后，记录 `backup_manifest` 校验和、`pg_verifybackup` 结果与恢复演练，再按容量规则淘汰较早的实验备份。真实生产保留策略必须满足 RPO/RTO，不可照搬实验清理。
+这里的`--checkpoint=spread`让检查点尽量摊开，避免主动请求快速检查点造成额外尖峰；正式接入时仍要核对DBS发行版参数和备份时长。`--max-rate`负责备份数据传输的限速，**不是全盘 IO 硬上限**，WAL流、校验和业务写入仍会增加IO。输出目录创建后才会被路径发现；初始峰值要计入余量。一次完整备份结束后，记录`backup_manifest`校验和、`pg_verifybackup`结果与恢复演练，再按容量规则淘汰较早的实验备份。真实生产保留策略必须满足RPO/RTO，不可照搬实验清理。
 
-原 DBS 内置的 03:00 备份调度若仍在业务容器调用 `pg_basebackup`，就没有真正分离。要将任务改由备份容器的调度器/Job 执行，并让 DBS 查询任务状态或接受结果回执；DBS 当前二进制是否支持该接入要按发行版本验证。实验中直接从备份容器运行同参数客户端，只证明这条数据通路，**不等于 DBS 自动任务链已经迁移验收**。
+仓库的 [`deploy/backup-once.sh`](../deploy/backup-once.sh) 是一次性备份执行脚本，供独立备份容器或调度任务调用；它**不是**CCG daemon，也不自动替换DBS原有调度。运行前设置`BACKUP_ROOT`（已挂载的输出目录）、`PGHOST`（共享的Unix Socket目录）、`PGPORT`、`PGUSER`（脚本默认`replica`，94候选包指定独立的`ccg_backup`复制用户）和`MAX_RATE`（默认`60M`），再传可选的日期备份名，例如`20261108-lab`。94候选包从各自的Kubernetes Secret注入`PGPASSWORD`；密码不能放在脚本、镜像或公开配置中。脚本用`flock`拒绝并发，在隐藏的临时目录完成PG14 `pg_basebackup`与`pg_verifybackup`，两者成功后才原子改名为正式备份目录，并保存清单SHA256；失败时保留带`.inprogress-`前缀的目录供诊断，绝不可当成有效备份，也要有容量告警和人工清理规则。恢复演练仍是独立验收步骤。
+
+原 DBS 内置的 03:00 备份调度若仍在业务容器调用 `pg_basebackup`，就没有真正分离。已检查本地 DBS 源码：`DbUtil.startUp()`总会注册备份定时任务，`mod_phy_backup_time`只改变时刻，没有关闭开关；当当天备份目录存在且`backup.conf`的状态为`ok`时，`PostgresqlUtil.backup()`才跳过。因此不能只把新容器装上就声称分离，也不能让它在另一目录生成重复的全备。接入可选两条路线：给DBS增加明确的外部备份委托接口；或使备份容器在DBS认得的共享目录完成校验后，原子登记DBS格式的备份元数据，再把DBS原调度放在不会与新备份重叠的兜底时段。后一条路线必须测试失败、超时、重启及恢复选择，不可提前标记`ok`。94当前候选包尚未做到自动调度与元数据对接；从备份容器手动运行只验证数据通路，**不等于DBS自动任务链已经迁移验收**。
 
 ## 打开实时页面
 
