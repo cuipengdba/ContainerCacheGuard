@@ -15,6 +15,8 @@ import (
 	"unsafe"
 )
 
+const linuxOPath = 0x200000
+
 type identity struct {
 	Dev, Ino    uint64
 	Size, Mtime int64
@@ -25,7 +27,30 @@ type identity struct {
 func statFile(f *os.File) (identity, error) {
 	var s syscall.Stat_t
 	e := syscall.Fstat(int(f.Fd()), &s)
-	return identity{uint64(s.Dev), s.Ino, s.Size, s.Mtim.Sec*1e9 + s.Mtim.Nsec, s.Uid, s.Mode}, e
+	return identityFromStat(s), e
+}
+func identityFromStat(s syscall.Stat_t) identity {
+	return identity{uint64(s.Dev), s.Ino, s.Size, s.Mtim.Sec*1e9 + s.Mtim.Nsec, s.Uid, s.Mode}
+}
+
+// Discovery already holds a safely opened parent directory. Inspect the child
+// relative to that FD, without following links or reopening every ancestor.
+// The eventual advice path is independently reopened and identity checked.
+func statChild(parent *os.File, name string) (identity, error) {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
+		return identity{}, errors.New("invalid directory entry")
+	}
+	fd, err := syscall.Openat(int(parent.Fd()), name,
+		linuxOPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return identity{}, err
+	}
+	defer syscall.Close(fd)
+	var s syscall.Stat_t
+	if err := syscall.Fstat(fd, &s); err != nil {
+		return identity{}, err
+	}
+	return identityFromStat(s), nil
 }
 func sameFile(a, b identity) bool {
 	return a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.Mtime == b.Mtime

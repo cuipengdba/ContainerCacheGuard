@@ -34,6 +34,7 @@ type Counters struct {
 	DeferredRetries       uint64   `json:"deferred_retries"`
 	Sweeps                uint64   `json:"inventory_sweeps"`
 	CompletedSweeps       uint64   `json:"completed_inventory_sweeps"`
+	FastDiscoveryFallback bool     `json:"fast_discovery_fallback"`
 	Rate                  int64    `json:"current_advice_rate_bytes_per_second"`
 	HintEvents            uint64   `json:"hint_events"`
 	HintOverflows         uint64   `json:"hint_overflows"`
@@ -99,6 +100,7 @@ type engine struct {
 	dirInfo                      dirEntry
 	nextSweep                    time.Time
 	sweepOpen                    bool
+	childFastUnavailable         bool
 	files                        []*fileEntry
 	known                        map[string]*fileEntry
 	cursor                       int
@@ -152,6 +154,36 @@ func (e *engine) add(path string, rootDev uint64) {
 	if !supportedFS(f) || (rootDev != 0 && id.Dev != rootDev) {
 		return
 	}
+	e.addIdentity(path, rootDev, id)
+}
+func (e *engine) addChild(parent *os.File, name string, rootDev uint64) {
+	path := filepath.Join(e.dirInfo.Path, name)
+	if e.c.excluded(path) || len(path) > 4096 {
+		return
+	}
+	if e.childFastUnavailable {
+		e.add(path, rootDev)
+		return
+	}
+	id, err := statChild(parent, name)
+	if err != nil {
+		if errors.Is(err, syscall.ENOSYS) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.EPERM) {
+			e.childFastUnavailable = true
+			e.stats.FastDiscoveryFallback = true
+			e.add(path, rootDev)
+			return
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			e.failure(err)
+		}
+		return
+	}
+	e.addIdentity(path, rootDev, id)
+}
+func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
+	if rootDev != 0 && id.Dev != rootDev {
+		return
+	}
 	if id.Mode&syscall.S_IFMT == syscall.S_IFDIR {
 		if e.hints != nil {
 			e.hints.watch(path, id.Dev, e.c.MaxWatches)
@@ -163,7 +195,10 @@ func (e *engine) add(path string, rootDev uint64) {
 		e.dirs = append(e.dirs, dirEntry{path, id.Dev})
 		return
 	}
-	if id.Mode&syscall.S_IFMT != syscall.S_IFREG || id.Size < int64(os.Getpagesize()) || id.Mode&0111 != 0 {
+	// Vendor PostgreSQL data files can be mode 0700. In an explicit paths
+	// scope, an execute bit is not evidence that a file is program code.
+	if id.Mode&syscall.S_IFMT != syscall.S_IFREG || id.Size < int64(os.Getpagesize()) ||
+		(e.c.Mode == "auto" && id.Mode&0111 != 0) {
 		return
 	}
 	base := filepath.Base(path)
@@ -198,6 +233,16 @@ func (e *engine) add(path string, rootDev uint64) {
 	e.known[path] = n
 	e.files = append(e.files, n)
 }
+func (e *engine) finishSweep(now time.Time) {
+	if !e.sweepOpen {
+		return
+	}
+	e.stats.CompletedSweeps++
+	e.sweepOpen = false
+	// Very large trees can take longer than rescan_seconds to traverse. Start
+	// the quiet interval after completion so they do not rescan continuously.
+	e.nextSweep = now.Add(time.Duration(e.c.RescanSeconds) * time.Second)
+}
 func (e *engine) discover(now time.Time, deadline time.Time) {
 	if e.dir == nil && len(e.dirs) == 0 {
 		if now.Before(e.nextSweep) {
@@ -219,10 +264,7 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 	for time.Now().Before(deadline) && e.discovery.take(1) {
 		if e.dir == nil {
 			if len(e.dirs) == 0 {
-				if e.sweepOpen {
-					e.stats.CompletedSweeps++
-					e.sweepOpen = false
-				}
+				e.finishSweep(time.Now())
 				return
 			}
 			e.dirInfo = e.dirs[0]
@@ -243,7 +285,7 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 		names, err := e.dir.Readdirnames(1)
 		if len(names) > 0 {
 			e.stats.Discovered++
-			e.add(filepath.Join(e.dirInfo.Path, names[0]), e.dirInfo.Dev)
+			e.addChild(e.dir, names[0], e.dirInfo.Dev)
 		}
 		if err != nil {
 			e.dir.Close()
@@ -254,8 +296,7 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 		}
 	}
 	if e.dir == nil && len(e.dirs) == 0 && e.sweepOpen {
-		e.stats.CompletedSweeps++
-		e.sweepOpen = false
+		e.finishSweep(time.Now())
 	}
 }
 func (e *engine) track(f *fileEntry, offset, length, res int64, now time.Time) {
