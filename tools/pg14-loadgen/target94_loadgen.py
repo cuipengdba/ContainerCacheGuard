@@ -114,6 +114,31 @@ def counters(pg, sock, port):
                     map(int, values)))
 
 
+def rotate_test_events(pg, sock, port, maximum_bytes):
+    """Bound only disposable test rows, between pgbench rounds.
+
+    A low-disk pause alone would eventually stop a 48-hour load.  Truncating
+    this test-only append table keeps the insert workload running without
+    touching the migrated business database or adding steady DELETE/VACUUM IO.
+    """
+    before = int(sql(pg, sock, port, "SELECT pg_database_size('ccg_loadtest')").strip())
+    if before < maximum_bytes:
+        return None
+    events_bytes = int(sql(pg, sock, port,
+                           "SELECT pg_total_relation_size('ccg_load.events')").strip())
+    if events_bytes < maximum_bytes // 4:
+        outcome = {'state': 'paused_test_db_growth', 'before_bytes': before,
+                   'events_bytes': events_bytes, 'maximum_bytes': maximum_bytes}
+        print(json.dumps(outcome), flush=True)
+        return outcome
+    sql(pg, sock, port, 'TRUNCATE TABLE ccg_load.events RESTART IDENTITY')
+    after = int(sql(pg, sock, port, "SELECT pg_database_size('ccg_loadtest')").strip())
+    outcome = {'state': 'rotated_test_events', 'before_bytes': before,
+               'after_bytes': after, 'maximum_bytes': maximum_bytes}
+    print(json.dumps(outcome), flush=True)
+    return outcome
+
+
 def script_text(state_rows, inserts, updates, event_bytes, update_bytes, payload_mode):
     # The random mode prevents compression from making WAL pressure far below
     # the target; neither mode claims to reproduce application SQL exactly.
@@ -148,6 +173,8 @@ def main():
                         help="pause new rounds below this free space on the PGDATA filesystem")
     parser.add_argument("--min-mem-available-gib", type=int, default=5,
                         help="stop the current round and pause below this host MemAvailable")
+    parser.add_argument("--max-test-db-gib", type=int, default=12,
+                        help="truncate only ccg_loadtest.events between rounds above this size")
     parser.add_argument("--target94", action="store_true", help="required explicit target acknowledgement")
     parser.add_argument("--once", action="store_true", help="run one finite round, useful for safe smoke testing")
     args = parser.parse_args()
@@ -169,6 +196,8 @@ def main():
         parser.error("min-free-gib outside bounded lab range")
     if not 1 <= args.min_mem_available_gib <= 128:
         parser.error("min-mem-available-gib outside bounded lab range")
+    if not 2 <= args.max_test_db_gib <= 128:
+        parser.error("max-test-db-gib outside bounded lab range")
     pg_name, sock_name, port = ROLES[args.role]
     pg, sock = Path(pg_name), Path(sock_name)
     if not (pg / "bin/pgbench").is_file() or not sock.is_dir():
@@ -206,6 +235,17 @@ def main():
                                   "mem_available_bytes": mem_available,
                                   "minimum_gib": args.min_mem_available_gib}), flush=True)
                 time.sleep(30)
+                continue
+            rotated = rotate_test_events(pg, sock, port,
+                                         args.max_test_db_gib * (1 << 30))
+            if rotated and (rotated['state'] == 'paused_test_db_growth' or
+                            rotated['after_bytes'] >= args.max_test_db_gib * (1 << 30)):
+                # State-table growth or another issue needs inspection.  A
+                # repeated TRUNCATE cannot fix it, so pause the test load.
+                print(json.dumps({'role': args.role,
+                                  'state': 'paused_test_db_growth',
+                                  'database_bytes': rotated.get('after_bytes', rotated['before_bytes'])}), flush=True)
+                time.sleep(60)
                 continue
             before = counters(pg, sock, port)
             cmd = as_postgres([pg / "bin/pgbench", "-n", "-c", args.clients,
