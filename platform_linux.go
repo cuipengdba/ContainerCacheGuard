@@ -424,6 +424,10 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Writeback = s["file_writeback"]
 		m.ActiveFile = s["active_file"]
 		m.InactiveFile = s["inactive_file"]
+		if _, ok := s["workingset_refault_file"]; !ok && c.MaxFileRefaultsPerSecond > 0 {
+			m.Error = "configured file-refault guard unavailable (memory.stat)"
+		}
+		m.FileRefaults = s["workingset_refault_file"]
 		m.OOMKill = values(filepath.Join(r.path, "memory.events"))["oom_kill"]
 	} else {
 		m.Version = 1
@@ -442,6 +446,9 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Writeback = get("writeback")
 		m.ActiveFile = get("active_file")
 		m.InactiveFile = get("inactive_file")
+		if c.MaxFileRefaultsPerSecond > 0 {
+			m.Error = "configured file-refault guard requires cgroup v2"
+		}
 	}
 	if e != nil {
 		m.Error = e.Error()
@@ -494,6 +501,7 @@ func (r *metricReader) sample(c Config) Metrics {
 	if !r.previous.Time.IsZero() {
 		dt := m.Time.Sub(r.previous.Time).Seconds()
 		m.IOBytesPerSecond = float64(max64(0, m.IOBytes-r.previous.IOBytes)) / dt
+		m.FileRefaultsPerSecond = float64(max64(0, m.FileRefaults-r.previous.FileRefaults)) / dt
 		m.CPUPercent = (m.CPUSeconds - r.previous.CPUSeconds) / dt * 100
 	}
 	r.previous = m

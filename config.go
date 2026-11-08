@@ -43,6 +43,7 @@ type Config struct {
 	CriticalMode                 string   `json:"critical_mode"`
 	MaxDirtyBytes                int64    `json:"max_dirty_bytes"`
 	MaxIOBytesPerSecond          int64    `json:"max_io_bytes_per_second"`
+	MaxFileRefaultsPerSecond     float64  `json:"max_file_refaults_per_second"`
 	MaxIOPSIAvg10                float64  `json:"max_io_psi_avg10"`
 	MinNodeAvailableBytes        int64    `json:"min_node_available_bytes"`
 	ScanBytesPerSecond           int64    `json:"scan_bytes_per_second"`
@@ -134,8 +135,8 @@ func (c Config) validate() error {
 	if c.CacheTargetRatio <= 0 || c.CacheTargetRatio >= 1 || c.MemoryHighRatio <= 0 || c.MemoryCriticalRatio <= c.MemoryHighRatio || c.MemoryCriticalRatio >= 1 {
 		return errors.New("比例需满足 0<target<1，0<high<critical<1")
 	}
-	if c.MaxReappearanceRatio <= 0 || c.MaxReappearanceRatio > 1 || c.MaxCPUPercent <= 0 || c.MaxCPUPercent > 100 || c.MaxIOPSIAvg10 < 0 {
-		return errors.New("CPU、PSI 或重新驻留比例无效")
+	if c.MaxReappearanceRatio <= 0 || c.MaxReappearanceRatio > 1 || c.MaxCPUPercent <= 0 || c.MaxCPUPercent > 100 || c.MaxIOPSIAvg10 < 0 || c.MaxFileRefaultsPerSecond < 0 {
+		return errors.New("CPU、PSI、文件页 refault 速率或重新驻留比例无效")
 	}
 	if c.RegionBytes < 65536 || c.RegionBytes > 64*MiB || c.RegionBytes%65536 != 0 {
 		return errors.New("region_bytes 为 64KiB 的整数倍，范围64KiB..64MiB，兼容4K/64K页")

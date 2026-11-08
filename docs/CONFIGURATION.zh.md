@@ -52,6 +52,7 @@
 | `critical_mode` | `pause` | 默认临界时停止推测性回收。`bounded` 显式允许在临界区继续原有预算内的回收，适合经验证的低复用备份输出范围；仍遵守脏页、IO、业务延迟、自身开销和新增 OOM kill 保护，不自动提速、不写 cgroup 限额。一般业务目录先保留 pause |
 | `max_dirty_bytes` | `134217728`（128MiB） | dirty+writeback 超过此值暂停回收。0 表示只允许该统计为0；不代表每个目标页严格干净 |
 | `max_io_bytes_per_second` | `0` | 目标 cgroup 累计 io.stat 推算的读写流量保护阈值，0禁用；配置非零而接口缺失时停止动作 |
+| `max_file_refaults_per_second` | `0` | cgroup v2 中每秒 `workingset_refault_file` 增量的退让阈值，0禁用；配置非零但指标不可用时停止动作。它反映此前被逐出文件页的再次访问，**不能单独证明由本工具造成**。先测基线和业务峰值，再设阈值；它是滞后保护，不保证业务不受影响 |
 | `max_io_psi_avg10` | `10` | IO PSI some avg10 百分比超过10退让，0禁用；PSI 缺失显示 unknown，不伪装成0，但不会单独阻止全部运行 |
 | `min_node_available_bytes` | `0` | 可选宿主 `/proc/meminfo` MemAvailable 下限，0禁用。它不是 kubelet memory.available；未知或低于阈值时停止动作 |
 | `business_signal` | 空 | 可选业务信号 JSON 文件；配置后缺失/过期会停止动作。文件由监控系统写入，CCG 不执行外部命令 |
@@ -116,6 +117,7 @@ v2读取可见祖先的有限额与对应`memory.current`，记录占用比例�
 - `advice_bytes`：内核接受建议的文件范围累计字节，不等于已释放字节。
 - `observed_net_reduction_bytes`：建议前后观察到的驻留净下降，线上可能混入自然回收/并发访问，不作严格因果归因。
 - `observed_reappeared_bytes`：之后复查的驻留回升，可能是业务读取或预读，不是精确应用缺页数。
+- `file_refaults`、`file_refaults_per_second`：分别是所监控 cgroup 的累计文件页 refault 和相邻采样差分速率；可能由业务、备份或内核回收触发，不能单凭它归因于 CCG。首次样本没有速率基线。
 - `sampled_resident_bytes_cumulative`：累计采样结果，重复采样会重复计数，**绝不能当成当前总缓存**。
 - `indexed_files`、`index_rotations`、`completed_inventory_sweeps`：分别是当前工作索引大小、索引轮换次数和完整目录遍历次数。索引轮换次数上升表明文件数超过工作索引；完整遍历次数为0时不能声称覆盖整棵目录。`inventory_overflow` 仍记录目录队列或区域等其它预算溢出。文件内容不会被守护进程读取来判断冷热。
 - `degraded`：例如 PSI 缺失、没有 kubelet Summary、其它缓存只诊断。未知不等于健康。
