@@ -40,6 +40,8 @@
 
 94的DBS Pod始终显示`Running`且容器重启数为0，但PostgreSQL日志证实22:10和22:23先后两次收到`fast shutdown request`并重新启动。DBS日志显示其健康检查期间出现`pg_isready`和etcd超时，程序主动调用`pg_ctl stop -m fast`；同期分钟采样器多次无法访问Kubernetes API。21:55–22:12窗口，数据库慢日志中的多条`pucbdm`绑定阶段记录耗时约120秒。以上证明94已经出现过**Pod未驱逐但数据库连接中断**，尚不能断定是CCG、备份、某一SQL或文件缓存单独造成。94只有约30GiB内存，171约61GiB，DBS模拟压力又多次触发5GiB安全暂停；目前不能声称与171等强度连续运行，也不能保证“百分之百不驱逐”。验收应同时跟踪SQL连接成功率和p99、PostgreSQL内部重启、etcd/API可用性、节点可用内存、cgroup匿名/文件内存、IO延迟、备份校验与恢复演练。CCG的`fadvise`只能建议回收文件页，不能释放PUCBDM查询造成的匿名内存。
 
+23:04实测94的DBS cgroup `file≈6.49GiB`，其中`shmem≈5.90GiB`；HISDBS `file≈0.69GiB`，其中`shmem≈0.63GiB`。因此当时普通文件缓存近似分别只有0.59GiB和0.06GiB。CCG策略代码已用`max(0,file-shmem)`判断普通文件软目标，Web页也单列该值；按原始`file`总数宣称可释放6GiB会误导。旧rc4在DBS百万文件范围只完成2次全目录扫描、文件索引达到15万上限，故全量覆盖时延仍待实测。23:08–23:11已在不重启DBS/HISDBS业务Pod的条件下，单独把两套业务CCG子进程切到rc5；两套PostgreSQL Socket仍能连接。四处CCG现均为rc5，但业务端仍是`OBSERVE`，还没有取得真实高压全量备份的回收效果结论。
+
 ## 先准备四个范围
 
 下面的路径只是示意，`state_file` 的父目录由运行 UID 拥有，权限 0700；两个容器不能共用一个状态锁。DBS/HISDBS 可以使用相同的**容器内**路径，但它们应挂载各自的实际卷。
