@@ -100,14 +100,23 @@ func (h *accessHints) poll(e *engine, now, deadline time.Time) {
 			delete(h.paths, dir.Path)
 			continue
 		}
-		if name == "" || mask&syscall.IN_ISDIR != 0 || strings.Contains(name, "/") {
+		if name == "" || strings.Contains(name, "/") {
 			continue
 		}
-		h.events++
 		path := filepath.Join(dir.Path, name)
 		if e.c.excluded(path) {
 			continue
 		}
+		if mask&syscall.IN_ISDIR != 0 {
+			// Backups create a fresh output directory after the daemon starts.
+			// Watch it immediately; otherwise a large older backup can delay
+			// discovery of every new file until the ordinary sweep reaches it.
+			if mask&(syscall.IN_CREATE|syscall.IN_MOVED_TO) != 0 && e.discovery.take(1) {
+				e.add(path, dir.Dev) // safeOpen rejects symlinks and changed devices.
+			}
+			continue
+		}
+		h.events++
 		entry := e.known[path]
 		if entry == nil && e.discovery.take(1) {
 			e.add(path, dir.Dev)

@@ -269,6 +269,40 @@ func TestAccessHintsDoNotObserveTheirOwnScan(t *testing.T) {
 	}
 }
 
+func TestAccessHintsWatchNewBackupDirectory(t *testing.T) {
+	root := t.TempDir()
+	c := defaultConfig()
+	c.Mode = "paths"
+	c.Paths = []string{root}
+	e := newEngine(c, []string{root})
+	defer e.close()
+	e.add(root, 0)
+	if e.hints == nil || e.hints.fd < 0 {
+		t.Skip("inotify unavailable")
+	}
+	now := time.Now()
+	e.discovery.refill(now, 500, 500)
+	e.discovery.refill(now.Add(time.Second), 500, 500)
+	newDir := filepath.Join(root, ".inprogress-new-backup")
+	if err := os.Mkdir(newDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	e.hints.poll(e, now, now.Add(time.Second))
+	if _, watched := e.hints.paths[newDir]; !watched {
+		t.Fatal("new output directory was not watched promptly")
+	}
+	file := filepath.Join(newDir, "data")
+	if err := os.WriteFile(file, make([]byte, 65536), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4 && e.hints.files[file] == nil; i++ {
+		e.hints.poll(e, now, time.Now().Add(time.Second))
+	}
+	if e.hints.files[file] == nil {
+		t.Fatal("new backup file was not discovered by access hint")
+	}
+}
+
 func TestSafeOpenWalkFallback(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "f")
