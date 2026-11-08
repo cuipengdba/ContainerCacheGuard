@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import selectors
 import shutil
 import signal
 import subprocess
@@ -29,6 +30,13 @@ stop = False
 def request_stop(_sig, _frame):
     global stop
     stop = True
+
+
+def available_memory_bytes():
+    for line in Path('/proc/meminfo').read_text().splitlines():
+        if line.startswith('MemAvailable:'):
+            return int(line.split()[1]) * 1024
+    raise RuntimeError('MemAvailable is unavailable; refusing to continue load')
 
 
 def run(argv, env, timeout):
@@ -111,6 +119,8 @@ def main():
     parser.add_argument("--report-dir", type=Path, default=Path("/var/tmp/ccg-loadgen"))
     parser.add_argument("--min-free-gib", type=int, default=64,
                         help="pause new rounds below this free space on the PGDATA filesystem")
+    parser.add_argument("--min-mem-available-gib", type=int, default=5,
+                        help="stop the current round and pause below this host MemAvailable")
     parser.add_argument("--target94", action="store_true", help="required explicit target acknowledgement")
     parser.add_argument("--once", action="store_true", help="run one finite round, useful for safe smoke testing")
     args = parser.parse_args()
@@ -128,6 +138,8 @@ def main():
         parser.error("payload bytes outside bounded lab range")
     if not 1 <= args.min_free_gib <= 512:
         parser.error("min-free-gib outside bounded lab range")
+    if not 1 <= args.min_mem_available_gib <= 128:
+        parser.error("min-mem-available-gib outside bounded lab range")
     pg_name, sock_name, port = ROLES[args.role]
     pg, sock = Path(pg_name), Path(sock_name)
     if not (pg / "bin/pgbench").is_file() or not sock.is_dir():
@@ -158,21 +170,41 @@ def main():
                                   "free_bytes": free, "minimum_gib": args.min_free_gib}), flush=True)
                 time.sleep(60)
                 continue
+            mem_available = available_memory_bytes()
+            if mem_available < args.min_mem_available_gib * (1 << 30):
+                print(json.dumps({"role": args.role, "state": "paused_low_memory",
+                                  "mem_available_bytes": mem_available,
+                                  "minimum_gib": args.min_mem_available_gib}), flush=True)
+                time.sleep(30)
+                continue
             before = counters(pg, sock, port)
             cmd = as_postgres([pg / "bin/pgbench", "-n", "-c", args.clients,
                                "-j", min(args.clients, 4), "-R", args.rate,
-                               "-T", args.round_seconds, "-P", 60, "-f", script,
+                               "-T", args.round_seconds, "-P", 10, "-f", script,
                                "-h", sock, "-p", port, "-U", "postgres", TEST_DATABASE])
             started = time.time()
             process = subprocess.Popen(cmd, env=pg_env(pg), stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, text=True, cwd="/tmp")
             log_path = args.report_dir / f"{args.role}-{int(started)}.log"
+            paused_low_memory = False
             with log_path.open("w") as log:
-                while process.poll() is None:
-                    line = process.stdout.readline()
-                    if line:
-                        log.write(line)
-                        log.flush()
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while process.poll() is None:
+                        for _key, _mask in selector.select(timeout=5):
+                            line = process.stdout.readline()
+                            if line:
+                                log.write(line)
+                                log.flush()
+                        mem_available = available_memory_bytes()
+                        if mem_available < args.min_mem_available_gib * (1 << 30):
+                            paused_low_memory = True
+                            process.terminate()
+                            print(json.dumps({"role": args.role,
+                                              "state": "stopping_low_memory",
+                                              "mem_available_bytes": mem_available,
+                                              "minimum_gib": args.min_mem_available_gib}), flush=True)
+                            break
                     if stop:
                         process.terminate()
                 remainder = process.stdout.read()
@@ -181,12 +213,16 @@ def main():
             result = {"role": args.role, "started_epoch": started,
                       "ended_epoch": time.time(), "exit_code": process.wait(),
                       "target_tps": args.rate, "log": str(log_path),
+                      "paused_low_memory": paused_low_memory,
                       "before": before, "after": counters(pg, sock, port)}
             print(json.dumps(result), flush=True)
             if stop:
                 break
             if args.once:
                 break
+            if paused_low_memory:
+                time.sleep(30)
+                continue
             if result["exit_code"] != 0:
                 time.sleep(30)
     return 0
