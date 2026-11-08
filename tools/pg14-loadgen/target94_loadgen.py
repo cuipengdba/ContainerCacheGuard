@@ -70,7 +70,7 @@ def ensure_database(pg, sock, port):
         sql(pg, sock, port, f'CREATE DATABASE {TEST_DATABASE}', database='postgres')
 
 
-def prepare(pg, sock, port, state_rows):
+def prepare(pg, sock, port, state_rows, payload_mode):
     statement = """
     CREATE SCHEMA IF NOT EXISTS ccg_load;
     CREATE TABLE IF NOT EXISTS ccg_load.state (
@@ -82,6 +82,27 @@ def prepare(pg, sock, port, state_rows):
     SELECT s, '' FROM generate_series(1, %d) s ON CONFLICT (id) DO NOTHING;
     """ % state_rows
     sql(pg, sock, port, statement)
+    if payload_mode == 'random':
+        sql(pg, sock, port, 'CREATE EXTENSION IF NOT EXISTS pgcrypto')
+        # Keep the benchmark's tuple counters meaningful: out-of-line TOAST
+        # rows would make one application INSERT appear as many inserted tuples.
+        sql(pg, sock, port, 'ALTER TABLE ccg_load.events ALTER COLUMN payload SET STORAGE PLAIN')
+        sql(pg, sock, port, 'ALTER TABLE ccg_load.state ALTER COLUMN payload SET STORAGE PLAIN')
+        sql(pg, sock, port, '''
+        CREATE OR REPLACE FUNCTION ccg_load.random_payload(n integer)
+        RETURNS text LANGUAGE plpgsql VOLATILE AS $$
+        DECLARE value text := '';
+        BEGIN
+          WHILE length(value) < n LOOP
+            value := value || encode(gen_random_bytes(
+              LEAST(1024, CEIL((n - length(value)) / 2.0)::integer)), 'hex');
+          END LOOP;
+          RETURN left(value, n);
+        END;
+        $$;
+        ''')
+        if sql(pg, sock, port, 'SELECT length(ccg_load.random_payload(2048))').strip() != '2048':
+            raise RuntimeError('random payload function failed its length check')
 
 
 def counters(pg, sock, port):
@@ -93,14 +114,18 @@ def counters(pg, sock, port):
                     map(int, values)))
 
 
-def script_text(state_rows, inserts, updates, event_bytes, update_bytes):
-    # PostgreSQL repeat() yields a predictable byte count; randomness is only
-    # for key placement, not a claim that this reproduces application SQL.
+def script_text(state_rows, inserts, updates, event_bytes, update_bytes, payload_mode):
+    # The random mode prevents compression from making WAL pressure far below
+    # the target; neither mode claims to reproduce application SQL exactly.
+    event_payload = (f'ccg_load.random_payload({event_bytes})' if payload_mode == 'random'
+                     else f"repeat('e', {event_bytes})")
+    update_payload = (f'ccg_load.random_payload({update_bytes})' if payload_mode == 'random'
+                      else f"repeat('u', {update_bytes})")
     return (f"\\set key random(1, {state_rows - updates})\n"
             "BEGIN;\n"
             f"INSERT INTO ccg_load.events(key_id,payload) "
-            f"SELECT :key, repeat('e', {event_bytes}) FROM generate_series(1,{inserts});\n"
-            f"UPDATE ccg_load.state SET payload=repeat('u', {update_bytes}), "
+            f"SELECT :key, {event_payload} FROM generate_series(1,{inserts});\n"
+            f"UPDATE ccg_load.state SET payload={update_payload}, "
             f"touched=clock_timestamp() WHERE id BETWEEN :key AND :key+{updates - 1};\n"
             "COMMIT;\n")
 
@@ -116,6 +141,8 @@ def main():
     parser.add_argument("--updates-per-tx", type=int, default=4)
     parser.add_argument("--event-bytes", type=int, default=256)
     parser.add_argument("--update-bytes", type=int, default=1024)
+    parser.add_argument("--payload-mode", choices=('compressible', 'random'),
+                        default='compressible', help='random uses pgcrypto in ccg_loadtest')
     parser.add_argument("--report-dir", type=Path, default=Path("/var/tmp/ccg-loadgen"))
     parser.add_argument("--min-free-gib", type=int, default=64,
                         help="pause new rounds below this free space on the PGDATA filesystem")
@@ -136,6 +163,8 @@ def main():
         parser.error("state rows or rows-per-transaction outside bounded lab range")
     if not 1 <= args.event_bytes <= 4096 or not 1 <= args.update_bytes <= 8192:
         parser.error("payload bytes outside bounded lab range")
+    if args.payload_mode == 'random' and (args.event_bytes > 6000 or args.update_bytes > 6000):
+        parser.error('random inline payload is limited to 6000 bytes per row')
     if not 1 <= args.min_free_gib <= 512:
         parser.error("min-free-gib outside bounded lab range")
     if not 1 <= args.min_mem_available_gib <= 128:
@@ -152,7 +181,7 @@ def main():
     args.report_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(args.report_dir, 0o700)
     ensure_database(pg, sock, port)
-    prepare(pg, sock, port, args.state_rows)
+    prepare(pg, sock, port, args.state_rows, args.payload_mode)
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     with tempfile.TemporaryDirectory(prefix="ccg-pgbench-") as temp:
@@ -160,7 +189,8 @@ def main():
         os.chmod(temp, 0o700)
         script = Path(temp) / "load.sql"
         script.write_text(script_text(args.state_rows, args.inserts_per_tx,
-                                      args.updates_per_tx, args.event_bytes, args.update_bytes))
+                                      args.updates_per_tx, args.event_bytes,
+                                      args.update_bytes, args.payload_mode))
         os.chown(script, 999, 998)
         os.chmod(script, 0o600)
         while not stop:
@@ -213,6 +243,7 @@ def main():
             result = {"role": args.role, "started_epoch": started,
                       "ended_epoch": time.time(), "exit_code": process.wait(),
                       "target_tps": args.rate, "log": str(log_path),
+                      "payload_mode": args.payload_mode,
                       "paused_low_memory": paused_low_memory,
                       "before": before, "after": counters(pg, sock, port)}
             print(json.dumps(result), flush=True)

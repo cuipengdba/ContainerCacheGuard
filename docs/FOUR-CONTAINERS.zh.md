@@ -118,3 +118,5 @@ kubectl -n <namespace> port-forward pod/<hisdbs-pod> 9898:9898
 截至2026-11-08 14:30，94已通过YsP部署与171同标签的DBS/HISDBS镜像，均运行PostgreSQL 14.19；HISDBS的当日完整备份已在94原生校验、隔离恢复和切换活动库，DBS的当日备份已原生校验但仍在隔离恢复，尚未切换活动库。94约30GiB内存、171约61GiB，底层盘和节点余量也不同。只有数据库恢复、业务功能、备份容器接入、持续压力和回退演练均通过后，才能把此页的设计改成94已验证部署说明。
 
 94的压测辅助程序还提供`--min-mem-available-gib`（默认5）和`--min-free-gib`（默认64）。每轮启动前检查节点可用内存和PGDATA所在文件系统剩余空间；运行中每约5秒检查内存，低于阈值即终止该轮`pgbench`并记录`paused_low_memory`，恢复余量后继续。暂停时段不能算成达标负载时段。这个保护只是实验熔断，不代替Kubernetes驱逐事件、业务延迟和容器OOM监测。
+
+模拟程序默认`--payload-mode=compressible`，适合低成本冒烟，但重复文本容易被PostgreSQL压缩，产生的WAL可能远低于源端。`--payload-mode=random`只在独立的`ccg_loadtest`库中启用`pgcrypto`并生成难压缩载荷，可用`--event-bytes`、`--update-bytes`和`--rate`校准事务、行变更及WAL三类速率。随机模式把测试列设为行内存储，避免TOAST元组把`pg_stat_database.tup_inserted`虚高；单行载荷上限为6000字节。94在2026-11-08的120秒DBS标定中以110 TPS、每事务3次插入/4次更新、2048/4096字节随机载荷得到约111.1提交/s、332.6插入元组/s、443.6更新元组/s、2.78 MB/s WAL。源端备份时段相应中位数约105.4、367.2、452.5及2.86 MB/s；这是接近的**聚合指标**，不是原业务SQL或gissync数据流的逐条重放，也尚未证明长期备份并发安全。持续运行时需监控独立测试库增长和磁盘余量，不能只看TPS。
