@@ -6,7 +6,6 @@ set -Eeuo pipefail
 : "${CCG_CONFIG:=/etc/ccg/source.json}"
 : "${BUSINESS_START:=/root/start.sh}"
 
-"$CCG_BIN" doctor -config "$CCG_CONFIG" >/dev/null
 business_pid=
 guard_pid=
 stopping=0
@@ -22,10 +21,19 @@ stop_both() {
 }
 trap 'stop_both; exit 0' TERM INT
 
+start_guard() {
+  if "$CCG_BIN" doctor -config "$CCG_CONFIG" >/dev/null; then
+    "$CCG_BIN" run -config "$CCG_CONFIG" &
+    guard_pid=$!
+  else
+    echo 'CCG configuration check failed; DBS continues, retrying after 15 seconds' >&2
+    guard_pid=
+  fi
+}
+
 "$BUSINESS_START" &
 business_pid=$!
-"$CCG_BIN" run -config "$CCG_CONFIG" &
-guard_pid=$!
+start_guard
 
 while :; do
   if ! kill -0 "$business_pid" 2>/dev/null; then
@@ -36,17 +44,18 @@ while :; do
     stop_both
     exit "$status"
   fi
-  if ! kill -0 "$guard_pid" 2>/dev/null; then
-    set +e
-    wait "$guard_pid"
-    status=$?
-    set -e
-    echo "CCG exited with status $status; DBS continues, retrying after 15 seconds" >&2
+  if [[ -z "$guard_pid" ]] || ! kill -0 "$guard_pid" 2>/dev/null; then
+    if [[ -n "$guard_pid" ]]; then
+      set +e
+      wait "$guard_pid"
+      status=$?
+      set -e
+      echo "CCG exited with status $status; DBS continues, retrying after 15 seconds" >&2
+    fi
     sleep 15 &
     wait $! || true
     (( stopping )) && exit 0
-    "$CCG_BIN" run -config "$CCG_CONFIG" &
-    guard_pid=$!
+    start_guard
   fi
   sleep 3 &
   wait $! || true

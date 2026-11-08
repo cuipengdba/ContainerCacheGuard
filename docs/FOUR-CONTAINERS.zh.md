@@ -67,7 +67,7 @@ containercacheguard run --config /etc/ccg/source.json
 
 `run` 在前台常驻。用原有 supervisor 管理它，保持 PostgreSQL/DBS 的退出和信号处理。若现有镜像由 `/root/start.sh` 启动，应在独立实验环境检查该脚本何时创建目录、切换 UID 和启动 DBS，再加入 CCG 子进程；不能简单把第二个永久命令接在 `start.sh` 末尾。就绪探针应同时确认数据库/DBS 接口和 `containercacheguard status` 的采样新鲜度，否则 Pod `Running` 可能掩盖控制进程已退出。
 
-仓库提供[`deploy/business-supervisor.sh`](../deploy/business-supervisor.sh)作为**待四容器实测的接入候选**：它先检查CCG配置，再启动原厂`/root/start.sh`和CCG；CCG异常退出时，间隔15秒独立重启CCG，保留业务进程；Pod停止时向原厂启动脚本转发TERM。94上用虚拟业务和反复退出的虚拟CCG验证过这一信号/重启关系，尚未验证真实DBS重启全过程。部署时仍需为CCG状态单独告警，避免它持续失败而业务Pod看似健康。
+仓库提供[`deploy/business-supervisor.sh`](../deploy/business-supervisor.sh)作为**待四容器实测的接入候选**：它先启动原厂`/root/start.sh`，再检查CCG配置并启动CCG；CCG配置有误或进程异常退出时，间隔15秒独立重试，保留业务进程；Pod停止时向原厂启动脚本转发TERM。94上用虚拟业务和反复退出的虚拟CCG验证过这一信号/重启关系，尚未验证真实DBS重启全过程。部署时仍需为CCG状态单独告警，避免它持续失败而业务Pod看似健康。
 
 旧 DBS 代码有多个硬编码 `vmtouch` 路径，涉及备份、同步和源端 `releaseCache`。在 observe 阶段可并存以看现状，但无法把下降归因于 CCG；**enforce 阶段同一范围只能有一个回收执行者**。若现有 DBS 发行包没有关闭旧清理的配置开关，需要做明确的 DBS 接入改造，并验证备份/恢复退出码和异常路径。把 `vmtouch` 换成静默返回成功的空命令会掩盖问题，不应采用。`nocache` 若仍包装某个实际命令，也要核对其进程生命周期与缓存范围。
 
