@@ -72,6 +72,104 @@ func TestCompletedSweepIsReportedAfterTraversal(t *testing.T) {
 	}
 }
 
+func TestCompletedFileScanWaitsBeforeRepeating(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 8<<20)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := defaultConfig()
+	c.Mode = "paths"
+	c.Action = "observe"
+	c.Paths = []string{path}
+	c.RescanSeconds = 3600
+	c.ScanBytesPerSecond = 64 << 20
+	c.MaxOperationsPerSecond = 10000
+	c.WorkerBudgetMS = 500
+	c.AccessHints = false
+	e := newEngine(c, c.Paths)
+	defer e.close()
+	e.add(path, 0)
+	entry := e.known[path]
+	if entry == nil {
+		t.Fatal("probe file was not indexed")
+	}
+	e.nextSweep = time.Now().Add(time.Hour)
+	e.scan.tokens = float64(c.ScanBytesPerSecond)
+	e.ops.tokens = float64(c.MaxOperationsPerSecond)
+	e.duty.tokens = 0.5
+	var allow atomic.Bool
+	deadline := time.Now().Add(3 * time.Second)
+	for entry.NextScan.IsZero() && time.Now().Before(deadline) {
+		e.work(context.Background(), &allow)
+	}
+	if entry.NextScan.IsZero() {
+		t.Fatal("first scan did not complete")
+	}
+	first := e.stats.ScannedBytes
+	if first != entry.ID.Size {
+		t.Fatalf("expected one full scan of %d bytes, got %d", entry.ID.Size, first)
+	}
+	for i := 0; i < 10; i++ {
+		e.work(context.Background(), &allow)
+	}
+	if e.stats.ScannedBytes != first {
+		t.Fatalf("file was rescanned before interval: %d -> %d", first, e.stats.ScannedBytes)
+	}
+	entry.NextScan = time.Now().Add(-time.Second)
+	e.scan.tokens = float64(c.ScanBytesPerSecond)
+	e.ops.tokens = float64(c.MaxOperationsPerSecond)
+	e.duty.tokens = 0.5
+	e.work(context.Background(), &allow)
+	if e.stats.ScannedBytes <= first {
+		t.Fatal("file was not scanned after interval expired")
+	}
+}
+
+func TestAdviceMakesProgressWhileFileScanning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cached")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 8<<20)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if _, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	}
+	c := defaultConfig()
+	c.Mode = "paths"
+	c.Action = "enforce"
+	c.Trigger = "always"
+	c.Paths = []string{path}
+	c.WarmupSeconds = 0
+	c.ProtectSeconds = 0
+	c.MinFileAgeSeconds = 0
+	c.RescanSeconds = 3600
+	c.ScanBytesPerSecond = 64 << 20
+	c.InitialReclaimBytesPerSecond = 8 << 20
+	c.WorkerBudgetMS = 100
+	c.AccessHints = false
+	e := newEngine(c, c.Paths)
+	defer e.close()
+	e.add(path, 0)
+	e.nextSweep = time.Now().Add(time.Hour)
+	var allow atomic.Bool
+	allow.Store(true)
+	deadline := time.Now().Add(3 * time.Second)
+	for e.stats.AdviceBytes == 0 && time.Now().Before(deadline) {
+		e.work(context.Background(), &allow)
+		time.Sleep(10 * time.Millisecond)
+	}
+	if e.stats.AdviceBytes == 0 {
+		t.Fatalf("resident file never received advice: %+v", e.stats)
+	}
+}
+
 func TestFastDiscoverySkipsLinksAndEmptyFiles(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

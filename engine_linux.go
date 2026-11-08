@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,9 +44,10 @@ type Counters struct {
 	HintsAvailable        bool     `json:"access_hints_available"`
 }
 type fileEntry struct {
-	Path   string
-	ID     identity
-	Offset int64
+	Path     string
+	ID       identity
+	Offset   int64
+	NextScan time.Time
 }
 type dirEntry struct {
 	Path string
@@ -93,28 +95,28 @@ func (b *budget) take(n float64) bool {
 }
 
 type engine struct {
-	c                            Config
-	roots                        []string
-	dirs                         []dirEntry
-	dir                          *os.File
-	dirInfo                      dirEntry
-	nextSweep                    time.Time
-	sweepOpen                    bool
-	childFastUnavailable         bool
-	files                        []*fileEntry
-	known                        map[string]*fileEntry
-	cursor                       int
-	evictCursor                  int
-	regions                      map[regionKey]*region
-	queue                        []*region
-	qcursor                      int
-	scan, advice, ops, discovery budget
-	duty                         budget
-	rate                         int64
-	nextIncrease                 time.Time
-	cooldown                     time.Time
-	stats                        Counters
-	hints                        *accessHints
+	c                                     Config
+	roots                                 []string
+	dirs                                  []dirEntry
+	dir                                   *os.File
+	dirInfo                               dirEntry
+	nextSweep                             time.Time
+	sweepOpen                             bool
+	childFastUnavailable                  bool
+	files                                 []*fileEntry
+	known                                 map[string]*fileEntry
+	cursor                                int
+	evictCursor                           int
+	regions                               map[regionKey]*region
+	queue                                 []*region
+	qcursor                               int
+	scan, revisit, advice, ops, discovery budget
+	duty                                  budget
+	rate                                  int64
+	nextIncrease                          time.Time
+	cooldown                              time.Time
+	stats                                 Counters
+	hints                                 *accessHints
 }
 
 func newEngine(c Config, roots []string) *engine {
@@ -209,6 +211,7 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 		if !sameFile(old.ID, id) {
 			old.ID = id
 			old.Offset = 0
+			old.NextScan = time.Time{}
 		}
 		return
 	}
@@ -325,7 +328,11 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	if !r.Check && (!allow.Load() || now.Before(e.cooldown) || e.advice.tokens < float64(r.Length)) {
 		return
 	}
-	if !e.ops.take(1) || !e.scan.take(float64(r.Length)) {
+	needed := float64(r.Length)
+	if !r.Check {
+		needed *= 2 // Before and immediately after DONTNEED.
+	}
+	if e.revisit.tokens < needed || !e.ops.take(1) || !e.revisit.take(float64(r.Length)) {
 		return
 	}
 	f, err := safeOpen(r.Path)
@@ -383,7 +390,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		r.Due = now.Add(time.Duration(e.c.MinFileAgeSeconds) * time.Second)
 		return
 	}
-	if !allow.Load() || now.Before(e.cooldown) || !e.scan.take(float64(r.Length)) || !e.advice.take(float64(r.Length)) {
+	if !allow.Load() || now.Before(e.cooldown) || !e.revisit.take(float64(r.Length)) || !e.advice.take(float64(r.Length)) {
 		return
 	}
 	// Revalidate immediately before advice. A concurrent writer can still race;
@@ -447,7 +454,12 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		}
 	}()
 	deadline := now.Add(time.Duration(slice * float64(time.Second)))
-	e.scan.refill(now, float64(e.c.ScanBytesPerSecond), float64(e.c.ScanBytesPerSecond))
+	// Give candidate rechecks a reserved share of the configured sampling rate.
+	// Otherwise continuous file scanning can consume every token before advice.
+	revisitRate := float64(e.c.ScanBytesPerSecond) * 0.25
+	scanRate := float64(e.c.ScanBytesPerSecond) - revisitRate
+	e.scan.refill(now, scanRate, math.Max(scanRate, float64(e.c.RegionBytes)))
+	e.revisit.refill(now, revisitRate, math.Max(revisitRate, float64(2*e.c.RegionBytes)))
 	e.ops.refill(now, float64(e.c.MaxOperationsPerSecond), float64(e.c.MaxOperationsPerSecond))
 	e.discovery.refill(now, float64(e.c.DiscoverEntriesPerSecond), float64(e.c.DiscoverEntriesPerSecond))
 	if !allow.Load() {
@@ -489,6 +501,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	if e.hints != nil {
 		e.hints.sample(e, now, now.Add(time.Duration(slice*0.90*float64(time.Second))))
 	}
+	skipped := 0
 	for len(e.files) > 0 && time.Now().Before(deadline) && ctx.Err() == nil {
 		if !e.ops.take(1) {
 			break
@@ -497,8 +510,18 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			e.cursor = 0
 		}
 		entry := e.files[e.cursor]
+		if now.Before(entry.NextScan) {
+			e.cursor++
+			skipped++
+			if skipped >= len(e.files) {
+				break
+			}
+			continue
+		}
+		skipped = 0
 		if entry.Offset >= entry.ID.Size {
 			entry.Offset = 0
+			entry.NextScan = now.Add(time.Duration(e.c.RescanSeconds) * time.Second)
 			e.cursor++
 			continue
 		}
@@ -535,6 +558,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		if !sameFile(id, entry.ID) {
 			entry.ID = id
 			entry.Offset = 0
+			entry.NextScan = time.Time{}
 			f.Close()
 			e.cursor++
 			continue

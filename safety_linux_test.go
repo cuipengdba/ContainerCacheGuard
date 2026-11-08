@@ -310,7 +310,7 @@ func TestRecheckRetainsPartialAdviceButBoundsRetries(t *testing.T) {
 	r := &region{Key: k, Path: p, ID: id, Length: 65536, After: res, Before: res, Check: true, Attempts: 1}
 	e.regions[k] = r
 	e.ops.tokens = 10
-	e.scan.tokens = 1 << 20
+	e.revisit.tokens = 1 << 20
 	var allow atomic.Bool
 	allow.Store(true)
 	now := time.Now()

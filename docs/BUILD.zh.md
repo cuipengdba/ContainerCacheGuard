@@ -7,7 +7,7 @@
 Go 1.24 或更高，当前构建和 CI 使用 1.27.3。Python 仅用于可选构建辅助脚本和验收，不是产品运行依赖。
 
 ```sh
-python3 scripts/build.py --version 0.2.0-rc.2 --commit "$(git rev-parse --short HEAD)"
+python3 scripts/build.py --version v0.2.0-rc.5 --commit "$(git rev-parse --short HEAD)"
 # 或直接使用 Go：
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o containercacheguard .
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o containercacheguard-arm64 .
