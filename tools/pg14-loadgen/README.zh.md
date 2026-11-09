@@ -38,4 +38,6 @@ python3 target94_loadgen.py --role dbs --rate 110 --clients 4 --target94 \
 
 随后60TPS/HIS0.5TPS持续尝试在12:42因可用内存降至约6.04GiB由止损守护停止。进程快照和PG日志按容器PID对应：单个`pucbdm`查询后端匿名RSS约2.36GiB，查询包含1,431个SELECT分支；这次无备份，CCG仍为观察模式。12:50左右改为20TPS/HIS0.5TPS低档持续基线，7GiB自动暂停新轮次，5GiB止损并监测SQL失败/PG重启。低档持续运行的结果尚待观察，不能说已模拟171的同等压力，更不能说CCG解决了匿名内存峰值。
 
+13:12同一查询ID再次在94产生约2.36GiB后端匿名RSS，5GiB止损停下了20TPS低档；第一轮300秒曾完整运行，仍不能称长稳。13:15左右改成7GiB自暂停和4GiB硬止损，SQL探针失败或PG重启同样停压。自暂停后程序仍可在内存恢复时开始下一轮，但实际TPS与暂停占空比必须报告，不能用systemd的`active`代替持续有效负载。
+
 94此后以60TPS+0.5TPS做较长观察时使用`--min-mem-available-gib 7`，另有目标94专用守护在SQL探针失败、PostgreSQL内部重启或`MemAvailable<6.5GiB`时停止两套模拟程序。**systemd单元active只代表生成器进程存在**；每轮还要查`target_tps`、实际事务数、`paused_low_memory`和真实运行秒数。暂停和被守护停止的时间必须从“达到171同压力”的统计中剔除。这个60TPS档低于171的DBS约105TPS中位数，不可称同强度复现。
