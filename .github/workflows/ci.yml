@@ -34,6 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          test -z "$(git status --porcelain)"
           go build -trimpath -ldflags "-s -w -X main.version=0.2.0-rc.7 -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
           file dist/containercacheguard-linux-${{ matrix.arch }} | tee binary-info.txt
           readelf -h dist/containercacheguard-linux-${{ matrix.arch }} > elf-header.txt
