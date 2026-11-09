@@ -42,6 +42,9 @@ type Counters struct {
 	Watches               int      `json:"directory_watches"`
 	HintFiles             int      `json:"hint_files"`
 	HintsAvailable        bool     `json:"access_hints_available"`
+	PendingHints          int      `json:"pending_hint_paths"`
+	HintRetries           uint64   `json:"hint_discovery_retries"`
+	HintDropped           uint64   `json:"hint_queue_dropped"`
 }
 type fileEntry struct {
 	Path     string
@@ -111,6 +114,7 @@ type engine struct {
 	queue                                 []*region
 	qcursor                               int
 	scan, revisit, advice, ops, discovery budget
+	hintDiscovery                         budget
 	duty                                  budget
 	rate                                  int64
 	nextIncrease                          time.Time
@@ -461,7 +465,17 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	e.scan.refill(now, scanRate, math.Max(scanRate, float64(e.c.RegionBytes)))
 	e.revisit.refill(now, revisitRate, math.Max(revisitRate, float64(2*e.c.RegionBytes)))
 	e.ops.refill(now, float64(e.c.MaxOperationsPerSecond), float64(e.c.MaxOperationsPerSecond))
-	e.discovery.refill(now, float64(e.c.DiscoverEntriesPerSecond), float64(e.c.DiscoverEntriesPerSecond))
+	// Keep event-driven discovery independent of the ordinary tree walk.
+	// Otherwise a large old backup consumes all discovery tokens before a
+	// newly-created backup directory can be watched. The sum of both rates
+	// remains discover_entries_per_second.
+	hintRate := 0.0
+	if e.hints != nil && e.hints.fd >= 0 {
+		hintRate = float64(e.c.DiscoverEntriesPerSecond) * 0.25
+	}
+	ordinaryRate := float64(e.c.DiscoverEntriesPerSecond) - hintRate
+	e.discovery.refill(now, ordinaryRate, math.Max(1, ordinaryRate))
+	e.hintDiscovery.refill(now, hintRate, math.Max(1, hintRate))
 	if !allow.Load() {
 		e.rate = e.c.InitialReclaimBytesPerSecond
 		e.advice.tokens = 0
@@ -585,6 +599,9 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		e.stats.HintOverflows = e.hints.overflows
 		e.stats.Watches = len(e.hints.watches)
 		e.stats.HintFiles = len(e.hints.files)
+		e.stats.PendingHints = len(e.hints.pending)
+		e.stats.HintRetries = e.hints.retries
+		e.stats.HintDropped = e.hints.dropped
 	}
 	e.stats.DetectedRoots = append([]string{}, e.roots...)
 	return e.stats

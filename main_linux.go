@@ -213,19 +213,21 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
-	Time              time.Time `json:"time"`
-	Version           string    `json:"version"`
-	PID               int       `json:"pid"`
-	Mode              string    `json:"mode"`
-	Action            string    `json:"action"`
-	Decision          Decision  `json:"decision"`
-	Metrics           Metrics   `json:"metrics"`
-	Counters          Counters  `json:"counters"`
-	Roots             []string  `json:"roots"`
-	WorkerBusy        bool      `json:"worker_busy"`
-	WorkerBusySeconds float64   `json:"worker_busy_seconds"`
-	Paused            bool      `json:"paused"`
-	Degraded          []string  `json:"degraded"`
+	Time              time.Time   `json:"time"`
+	Version           string      `json:"version"`
+	PID               int         `json:"pid"`
+	Mode              string      `json:"mode"`
+	Action            string      `json:"action"`
+	IntervalMS        int         `json:"sample_interval_ms"`
+	Decision          Decision    `json:"decision"`
+	Metrics           Metrics     `json:"metrics"`
+	Counters          Counters    `json:"counters"`
+	Roots             []string    `json:"roots"`
+	WorkerBusy        bool        `json:"worker_busy"`
+	WorkerBusySeconds float64     `json:"worker_busy_seconds"`
+	Paused            bool        `json:"paused"`
+	Degraded          []string    `json:"degraded"`
+	Diagnostics       Diagnostics `json:"diagnostics"`
 }
 
 func business(c Config, m *Metrics) {
@@ -305,7 +307,7 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 		}
 	}()
 	started := time.Now()
-	s := Status{Time: started, Version: version, PID: os.Getpid(), Mode: c.Mode, Action: c.Action, Roots: roots}
+	s := Status{Time: started, Version: version, PID: os.Getpid(), Mode: c.Mode, Action: c.Action, Roots: roots, IntervalMS: c.IntervalMS}
 	m := r.sample(c)
 	oomBaseline := m.OOMKill
 	lastLog := time.Time{}
@@ -351,6 +353,9 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 				if m.MemoryPSI == nil {
 					s.Degraded = append(s.Degraded, "memory_PSI_unavailable")
 				}
+				if !m.FileRefaultRateValid {
+					s.Degraded = append(s.Degraded, "file_refault_rate_unavailable")
+				}
 				s.Degraded = append(s.Degraded, "no_kubelet_summary", "application_heap_shmem_slab_not_reclaimed")
 				if len(roots) == 0 {
 					s.Decision.Allow = false
@@ -369,6 +374,7 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 					s.Decision.State = "SUSPENDED"
 					s.Decision.Reason = "worker_slow_or_blocked"
 				}
+				s.Diagnostics = diagnose(c, m, s.Decision)
 				if e = atomicJSON(c.StateFile, s); e != nil {
 					allow.Store(false)
 					return fmt.Errorf("state write failed; stopping: %w", e)

@@ -281,8 +281,8 @@ func TestAccessHintsWatchNewBackupDirectory(t *testing.T) {
 		t.Skip("inotify unavailable")
 	}
 	now := time.Now()
-	e.discovery.refill(now, 500, 500)
-	e.discovery.refill(now.Add(time.Second), 500, 500)
+	e.hintDiscovery.refill(now, 500, 500)
+	e.hintDiscovery.refill(now.Add(time.Second), 500, 500)
 	newDir := filepath.Join(root, ".inprogress-new-backup")
 	if err := os.Mkdir(newDir, 0700); err != nil {
 		t.Fatal(err)

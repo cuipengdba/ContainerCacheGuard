@@ -98,3 +98,15 @@ func TestWebBasicAuthentication(t *testing.T) {
 		}
 	}
 }
+
+func TestWebHistoryMarksInvalidSamples(t *testing.T) {
+	w := &webState{limit: 60}
+	w.publish(Status{Time: time.Now(), IntervalMS: 1000, Metrics: Metrics{File: 123}})
+	w.publish(Status{Time: time.Now(), IntervalMS: 1000, Metrics: Metrics{Error: "read failed"}})
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	p := w.pointsLocked()
+	if len(p) != 2 || !p[0].Valid || p[1].Valid || p[0].IntervalMS != 1000 {
+		t.Fatalf("failed metrics sample was not marked for a chart gap: %+v", p)
+	}
+}

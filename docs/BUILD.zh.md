@@ -7,7 +7,7 @@
 Go 1.24 或更高，当前构建和 CI 使用 1.27.3。Python 仅用于可选构建辅助脚本和验收，不是产品运行依赖。
 
 ```sh
-python3 scripts/build.py --version v0.2.0-rc.5 --commit "$(git rev-parse --short HEAD)"
+python3 scripts/build.py --version 0.2.0-rc.7 --commit "$(git rev-parse --short HEAD)"
 # 或直接使用 Go：
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o containercacheguard .
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o containercacheguard-arm64 .
@@ -20,8 +20,11 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o con
 ```sh
 go vet ./...
 go test -race -count=1 -v ./...
+node scripts/test-web.cjs
 python3 scripts/integration.py ./dist/containercacheguard-linux-amd64 --output integration-results.json
 ```
+
+网页回归使用Node.js 22内置模块，不需要安装npm包；Node.js不是程序运行依赖。它检查实际内嵌脚本对未知值、有效零值和图表空窗的处理；不替代真实浏览器的视觉验收。
 
 race 测试需要本机可用的 C 工具链；这不改变最终静态程序的依赖。Linux 文件机制测试需支持的真实磁盘文件系统；tmpfs 不作为支持目标。集成测试只在临时目录造文件，不修改 cgroup 限额、不全机清缓存。持续压力、真实数据、Kubernetes/OpenShift 验收另见测试报告。
 

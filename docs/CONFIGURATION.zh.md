@@ -86,14 +86,14 @@ io.stat 在 device-mapper 等堆叠存储上可能同时列出逻辑盘和物理
 | `reclaim_bytes_per_second` | `67108864`（64MiB/s） | 建议释放范围速率上限，允许最多约1秒额度突发 |
 | `initial_reclaim_bytes_per_second` | `4194304`（4MiB/s） | 起始速率；健康时每30秒增加这一档，发现代价或无效则降低 |
 | `region_bytes` | `4194304`（4MiB） | 单次文件范围；64KiB整数倍，64KiB..64MiB，适配4K/64K页大小；不会建议释放末尾不满页的部分 |
-| `discover_entries_per_second` | `500` | 新目录条目发现预算；限额后有滞后，状态不能解释成完整即时目录 |
+| `discover_entries_per_second` | `500` | 发现总速率预算；inotify可用且启用时，25%预留给事件发现，75%用于普通遍历，其余情况全部用于普通遍历。低于每秒1条的分配允许积攒到1条后执行；总速率受限，小额度下两路可各有1条突发。预留额度不借给普通遍历，完整补扫可能变慢 |
 | `max_files` | `150000` | 文件工作索引上限；超过后轮换旧索引并累计 `index_rotations`，不无限增内存。轮换不保证所有文件在同一时刻被采样 |
 | `max_directories` | `20000` | 待遍历目录队列上限 |
 | `max_regions` | `8192` | 候选、复查和保护区域记录上限；不是保存全库位图 |
 | `max_operations_per_second` | `1000` | 区域处理次数预算；一次区域处理可能涉及多个系统调用，不是精确 syscall 计数 |
 | `access_hints` | `true` | 有界目录级访问提示，帮助及时发现正在被扫描的大文件；false 仅轮询。提示不等于冷页判断 |
 | `max_watches` | `1024` | inotify 目录 watch 上限，范围1..16384；不足时保留轮询并记录溢出 |
-| `max_hint_files` | `2048` | 访问提示对应的文件队列上限，范围1..100000；不随业务事件无限增长 |
+| `max_hint_files` | `2048` | 范围1..100000。限制已索引的访问提示文件队列，也分别限制待发现路径队列；两队列合计最多2倍该值，不是共同上限。每条还占用路径字符串及索引内存，不能按指针大小估算总成本 |
 | `max_cpu_percent` | `5` | 自身进程上一个采样窗口超过单核5%时暂停工作；这是反馈保护，不是内核 CPU 硬限额 |
 | `max_rss_bytes` | `134217728`（128MiB） | 自身 RSS 超过该值暂停扫描；同时设置更低的 Go 内存软目标。不是进程硬内存上限 |
 | `worker_budget_ms` | `25` | 每秒工作时间预算；分最多5毫秒的小片执行。显式`observe`使用所配预算来测量大目录覆盖，仍受自身CPU/RSS保护；`enforce`被安全门拦住时最多使用5毫秒/秒做慢速观察。阻塞系统调用不能保证严格按时返回 |
@@ -117,9 +117,12 @@ v2读取可见祖先的有限额与对应`memory.current`，记录占用比例�
 - `advice_bytes`：内核接受建议的文件范围累计字节，不等于已释放字节。
 - `observed_net_reduction_bytes`：建议前后观察到的驻留净下降，线上可能混入自然回收/并发访问，不作严格因果归因。
 - `observed_reappeared_bytes`：之后复查的驻留回升，可能是业务读取或预读，不是精确应用缺页数。
-- `file_refaults`、`file_refaults_per_second`：分别是所监控 cgroup 的累计文件页 refault 和相邻采样差分速率；可能由业务、备份或内核回收触发，不能单凭它归因于 CCG。首次样本没有速率基线。
+- `file_refaults`、`file_refaults_per_second`：分别是所监控 cgroup 的累计文件页 refault 和相邻采样差分速率；可能由业务、备份或内核回收触发，不能单凭它归因于 CCG。`file_refaults_available`表示内核字段存在，`file_refault_rate_valid`表示本次差分可用。首次样本、采集失败后的下一样本、字段缺失或计数回退时速率未知；启用refault阈值后会暂停新释放，直到有效基线恢复。
 - `sampled_resident_bytes_cumulative`：累计采样结果，重复采样会重复计数，**绝不能当成当前总缓存**。
 - `indexed_files`、`index_rotations`、`completed_inventory_sweeps`：分别是当前工作索引大小、索引轮换次数和完整目录遍历次数。索引轮换次数上升表明文件数超过工作索引；完整遍历次数为0时不能声称覆盖整棵目录。`inventory_overflow` 仍记录目录队列或区域等其它预算溢出。文件内容不会被守护进程读取来判断冷热。
+- `pending_hint_paths`：已收到事件但等待发现额度的路径数；`hint_discovery_retries`是从队列重新尝试发现的累计次数，不保证成功；`hint_queue_dropped`累计队列已满或到期丢弃数。队列去重，等待有效期至少60秒，仍以普通补扫兜底。
+- `diagnostics`：只解释当前可观测构成，不改变策略。`valid=false`时不可据此判断健康；`other_charged_bytes`是当前计费减普通文件页后的近似剩余，含匿名/共享/内核等，不能理解为另一类可直接清空的缓存；`file_target_excess_bytes`是超过文件软目标的估算值，不是承诺释放量。
+- `sample_interval_ms`：采样周期，网页用它识别长空窗；采集错误及空窗曲线断线，不以零值填补。
 - `degraded`：例如 PSI 缺失、没有 kubelet Summary、其它缓存只诊断。未知不等于健康。
 - `worker_busy_seconds`：单工作队列执行延迟；超过5秒会停止派发新的建议，不启动替代工作线程制造堆积。
 

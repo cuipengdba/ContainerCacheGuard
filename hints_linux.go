@@ -20,6 +20,12 @@ type fileHint struct {
 	offset      int64
 	until, next time.Time
 }
+type pendingHint struct {
+	path    string
+	dev     uint64
+	dir     bool
+	expires time.Time
+}
 type accessHints struct {
 	fd                   int
 	watches              map[int]dirEntry
@@ -30,6 +36,9 @@ type accessHints struct {
 	buffer               []byte
 	bufferPos, bufferEnd int
 	events, overflows    uint64
+	pending              map[string]*pendingHint
+	pendingQueue         []*pendingHint
+	retries, dropped     uint64
 }
 
 func newAccessHints() *accessHints {
@@ -37,7 +46,7 @@ func newAccessHints() *accessHints {
 	if e != nil {
 		fd = -1
 	}
-	return &accessHints{fd: fd, watches: map[int]dirEntry{}, paths: map[string]int{}, files: map[string]*fileHint{}, buffer: make([]byte, 16384)}
+	return &accessHints{fd: fd, watches: map[int]dirEntry{}, paths: map[string]int{}, files: map[string]*fileHint{}, pending: map[string]*pendingHint{}, buffer: make([]byte, 16384)}
 }
 func (h *accessHints) close() {
 	if h.fd >= 0 {
@@ -67,6 +76,7 @@ func (h *accessHints) poll(e *engine, now, deadline time.Time) {
 	if h.fd < 0 {
 		return
 	}
+	h.retryPending(e, now, deadline)
 	if h.bufferPos >= h.bufferEnd {
 		n, err := syscall.Read(h.fd, h.buffer)
 		if err != nil {
@@ -111,32 +121,86 @@ func (h *accessHints) poll(e *engine, now, deadline time.Time) {
 			// Backups create a fresh output directory after the daemon starts.
 			// Watch it immediately; otherwise a large older backup can delay
 			// discovery of every new file until the ordinary sweep reaches it.
-			if mask&(syscall.IN_CREATE|syscall.IN_MOVED_TO) != 0 && e.discovery.take(1) {
-				e.add(path, dir.Dev) // safeOpen rejects symlinks and changed devices.
+			if mask&(syscall.IN_CREATE|syscall.IN_MOVED_TO) != 0 {
+				h.discoverOrDefer(e, path, dir.Dev, true, now)
 			}
 			continue
 		}
 		h.events++
-		entry := e.known[path]
-		if entry == nil && e.discovery.take(1) {
-			e.add(path, dir.Dev)
-			entry = e.known[path]
-		}
-		if entry == nil {
-			continue
-		}
-		if old := h.files[path]; old != nil {
-			old.until = now.Add(time.Duration(e.c.ProtectSeconds+e.c.RecheckSeconds+10) * time.Second)
-			continue
-		}
-		if len(h.files) >= e.c.MaxHintFiles {
-			h.overflows++
-			continue
-		}
-		f := &fileHint{path: path, until: now.Add(time.Duration(e.c.ProtectSeconds+e.c.RecheckSeconds+10) * time.Second)}
-		h.files[path] = f
-		h.queue = append(h.queue, f)
+		h.discoverOrDefer(e, path, dir.Dev, false, now)
 	}
+}
+
+// Already-received hints survive a temporary token shortage. This does not
+// recover events lost by the kernel or an exhausted queue; the ordinary sweep
+// remains necessary. The pending queue has its own MaxHintFiles bound.
+func (h *accessHints) discoverOrDefer(e *engine, path string, dev uint64, dir bool, now time.Time) {
+	if !dir && e.known[path] != nil {
+		h.rememberFile(e, path, now)
+		return
+	}
+	ttl := time.Duration(e.c.ProtectSeconds+e.c.RecheckSeconds+10) * time.Second
+	if ttl < time.Minute {
+		ttl = time.Minute
+	}
+	if old := h.pending[path]; old != nil {
+		old.dev, old.dir = dev, dir
+		old.expires = now.Add(ttl)
+		return
+	}
+	if e.hintDiscovery.take(1) {
+		h.applyHint(e, &pendingHint{path: path, dev: dev, dir: dir}, now)
+		return
+	}
+	if len(h.pending) >= e.c.MaxHintFiles {
+		h.overflows++
+		h.dropped++
+		return
+	}
+	p := &pendingHint{path: path, dev: dev, dir: dir, expires: now.Add(ttl)}
+	h.pending[path] = p
+	h.pendingQueue = append(h.pendingQueue, p)
+}
+
+func (h *accessHints) applyHint(e *engine, p *pendingHint, now time.Time) {
+	e.add(p.path, p.dev) // Revalidate scope, symlinks, filesystem and device.
+	if !p.dir && e.known[p.path] != nil {
+		h.rememberFile(e, p.path, now)
+	}
+}
+
+func (h *accessHints) retryPending(e *engine, now, deadline time.Time) {
+	for len(h.pendingQueue) > 0 && time.Now().Before(deadline) {
+		p := h.pendingQueue[0]
+		expired := !now.Before(p.expires)
+		if !expired && !e.hintDiscovery.take(1) {
+			return
+		}
+		h.pendingQueue[0] = nil
+		h.pendingQueue = h.pendingQueue[1:]
+		delete(h.pending, p.path)
+		if expired {
+			h.dropped++
+			continue
+		}
+		h.retries++
+		h.applyHint(e, p, now)
+	}
+}
+
+func (h *accessHints) rememberFile(e *engine, path string, now time.Time) {
+	until := now.Add(time.Duration(e.c.ProtectSeconds+e.c.RecheckSeconds+10) * time.Second)
+	if old := h.files[path]; old != nil {
+		old.until = until
+		return
+	}
+	if len(h.files) >= e.c.MaxHintFiles {
+		h.overflows++
+		return
+	}
+	f := &fileHint{path: path, until: until}
+	h.files[path] = f
+	h.queue = append(h.queue, f)
 }
 func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 	visits := 0

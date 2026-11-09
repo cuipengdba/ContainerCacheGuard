@@ -20,6 +20,8 @@ import (
 // The separate 48-hour lab collector stores long-term evidence outside the daemon.
 type WebPoint struct {
 	Time         time.Time `json:"time"`
+	Valid        bool      `json:"valid"`
+	IntervalMS   int       `json:"sample_interval_ms"`
 	File         int64     `json:"file_bytes"`
 	ActiveFile   int64     `json:"active_file_bytes"`
 	InactiveFile int64     `json:"inactive_file_bytes"`
@@ -124,7 +126,7 @@ func startWeb(ctx context.Context, c Config) (*webState, error) {
 
 func (w *webState) publish(s Status) {
 	m := s.Metrics
-	p := WebPoint{Time: s.Time, File: m.File, ActiveFile: m.ActiveFile,
+	p := WebPoint{Time: s.Time, Valid: m.Error == "", IntervalMS: s.IntervalMS, File: m.File, ActiveFile: m.ActiveFile,
 		InactiveFile: m.InactiveFile, Anon: m.Anon, Shmem: m.Shmem, Slab: m.Slab,
 		Current: m.Current, Limit: m.Limit, Dirty: m.Dirty, Writeback: m.Writeback,
 		IOBPS: m.IOBytesPerSecond}
@@ -173,19 +175,63 @@ pre{overflow:auto;white-space:pre-wrap;color:#c5d4e2;font-size:12px}a{color:#78c
 </style><body><div class="top"><div><h1>ContainerCacheGuard</h1><small>容器内存与文件缓存 · 秒级状态</small></div><span id="state" class="badge">连接中</span></div>
 <div class="grid" id="cards"></div>
 <div class="panel"><div class="top"><strong>最近内存变化</strong><small id="range"></small></div><canvas id="chart"></canvas><div class="legend" id="legend"></div></div>
+<div class="panel"><strong>当前判断与建议</strong><pre id="explain">等待首个采样</pre></div>
 <div class="panel"><strong>治理与诊断</strong><pre id="detail">等待首个采样</pre></div>
 <small>file 包含 shmem；“普通文件缓存”按 file − shmem 估算。匿名内存、共享内存和 slab 只监测，不由文件回收接口清理。图表来自有界内存历史，刷新页面不会触发文件扫描。</small>
 <script>
 const fields=[['普通文件缓存','ordinary','#5fd2d8'],['文件缓存 file','file_bytes','#7bb8ff'],['活跃文件 active_file','active_file_bytes','#ffb96b'],['非活跃文件 inactive_file','inactive_file_bytes','#9f8dff'],['匿名内存 anon','anon_bytes','#eb91be'],['共享内存 shmem','shmem_bytes','#73d79c'],['Slab','slab_bytes','#e7d47e'],['内存总量','current_bytes','#ffffff'],['脏页 dirty','dirty_bytes','#ed806e'],['写回 writeback','writeback_bytes','#dcad78']];
-const gib=x=>(x/1073741824).toFixed(2)+' GiB';
+const gib=x=>Number.isFinite(x)?(x/1073741824).toFixed(2)+' GiB':'未知';
 function card(label,value,color){return '<div class="card"><div class="label">'+label+'</div><div class="value" style="color:'+color+'">'+gib(value)+'</div></div>'}
 function render(s,serverTime){const m=s.metrics||{},age=Date.parse(serverTime)-Date.parse(s.time),fresh=Number.isFinite(age)&&age>=-2000&&age<10000;
  document.getElementById('state').textContent=(fresh?'实时 · ':'数据已过期 · ')+s.decision.state;
  document.getElementById('state').className='badge'+(fresh?'':' bad');
- document.getElementById('cards').innerHTML=fields.map(([label,key,color])=>card(label,key==='ordinary'?Math.max(0,m.file_bytes-m.shmem_bytes):m[key]||0,color)).join('');
- document.getElementById('detail').textContent='采样：'+s.time+'\n容器：'+m.cgroup+'\n策略：'+s.mode+' / '+s.action+'\n状态：'+s.decision.state+' · '+s.decision.reason+'\nIO：'+((m.io_bytes_per_second||0)/1048576).toFixed(1)+' MiB/s · IO PSI：'+(m.io_psi_avg10??'未知')+'\n本容器用量：'+gib(m.current_bytes||0)+' · 可见最严限额：'+(m.limit_bytes?gib(m.limit_bytes):'未知')+'\n共享父组用量：'+(m.pressured_ancestor_limit_bytes?gib(m.pressured_ancestor_current_bytes)+' / '+gib(m.pressured_ancestor_limit_bytes):'未见有限额')+' · 宿主可用：'+gib(m.host_memavailable_bytes||0)+'\nOOM kill：'+m.oom_kill_total+' · 建议范围：'+gib(s.counters.advice_bytes||0)+' · 净驻留下降：'+gib(s.counters.observed_net_reduction_bytes||0)+'\n自身 RSS：'+((m.self_rss_bytes||0)/1048576).toFixed(1)+' MiB · CPU：'+(m.self_cpu_percent||0).toFixed(1)+'%\n文件页 refault：'+(m.version===2&&typeof m.file_refaults_per_second==='number'?m.file_refaults_per_second.toFixed(1):'未知')+' 次/秒（不能单独归因于 CCG）'+'\n目录遍历：'+(s.counters.completed_inventory_sweeps||0)+'轮 · 文件索引轮换：'+(s.counters.index_rotations||0)+'次\n监控范围：'+(s.roots||[]).join(', ')+'\n能力降级：'+(s.degraded||[]).join(', ');
+ document.getElementById('cards').innerHTML=fields.map(([label,key,color])=>card(label,m.error?null:key==='ordinary'?Math.max(0,m.file_bytes-m.shmem_bytes):key==='slab_bytes'&&m.version!==2?null:m[key],color)).join('');
+ const dx=s.diagnostics||{};
+ document.getElementById('explain').textContent=(dx.notes||[]).map(n=>n.message).join('\n\n')+'\n\n'+(dx.valid?'普通文件页以外的计费用量约 '+gib(dx.other_charged_bytes)+'，其中可能含匿名、共享和内核内存；不是一种可直接清理的缓存。':'当前构成判断不可用，先检查采集错误。');
+ document.getElementById('explain').textContent+='\n\n发现提示：等待 '+(s.counters.pending_hint_paths||0)+' 个，重试 '+(s.counters.hint_discovery_retries||0)+' 次，队列丢弃 '+(s.counters.hint_queue_dropped||0)+' 次。丢弃后仍依赖普通补扫。';
+ const measured=(value,format)=>!m.error&&Number.isFinite(value)?format(value):'未知';
+ const mem=value=>measured(value,gib),decimal=value=>measured(value,n=>n.toFixed(1));
+ document.getElementById('detail').textContent=[
+  '采样：'+s.time,
+  '容器：'+m.cgroup,
+  '策略：'+s.mode+' / '+s.action,
+  '状态：'+s.decision.state+' · '+s.decision.reason,
+  '采集错误：'+(m.error||'无'),
+  'IO：'+decimal(m.io_bytes_per_second/1048576)+' MiB/s · IO PSI：'+(!m.error?(m.io_psi_avg10??'未知'):'未知'),
+  '本容器用量：'+mem(m.current_bytes)+' · 可见最严限额：'+(m.limit_bytes?mem(m.limit_bytes):'未知'),
+  '共享父组用量：'+(!m.error&&m.pressured_ancestor_limit_bytes?mem(m.pressured_ancestor_current_bytes)+' / '+mem(m.pressured_ancestor_limit_bytes):'未知或未见有限额')+' · 宿主可用：'+mem(m.host_memavailable_bytes),
+  'OOM kill：'+(m.version===2?measured(m.oom_kill_total,String):'未知')+' · 建议范围：'+gib(s.counters.advice_bytes||0)+' · 净驻留下降：'+gib(s.counters.observed_net_reduction_bytes||0),
+  '自身 RSS：'+decimal(m.self_rss_bytes/1048576)+' MiB · CPU：'+decimal(m.self_cpu_percent)+'%',
+  '文件页 refault：'+(m.file_refault_rate_valid===true?decimal(m.file_refaults_per_second):'未知')+' 次/秒（不能单独归因于 CCG）',
+  '目录遍历：'+(s.counters.completed_inventory_sweeps||0)+'轮 · 文件索引轮换：'+(s.counters.index_rotations||0)+'次',
+  '监控范围：'+(s.roots||[]).join(', '),
+  '能力降级：'+(s.degraded||[]).join(', ')
+ ].join('\n');
 }
-function graph(h){if(!h.length)return;const c=document.getElementById('chart'),dpr=devicePixelRatio||1,w=c.clientWidth,ht=270;c.width=w*dpr;c.height=ht*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);x.clearRect(0,0,w,ht);const keys=[['file_bytes','#7bb8ff','文件缓存'],['active_file_bytes','#ffb96b','活跃文件'],['anon_bytes','#eb91be','匿名内存'],['shmem_bytes','#73d79c','共享内存'],['current_bytes','#ffffff','内存总量']];const max=Math.max(1,...h.map(p=>p.current_bytes||0),...h.map(p=>p.file_bytes||0))*1.1;x.strokeStyle='#34485b';x.lineWidth=1;for(let i=0;i<5;i++){let y=15+(ht-35)*i/4;x.beginPath();x.moveTo(42,y);x.lineTo(w-8,y);x.stroke();x.fillStyle='#a8b5c5';x.font='11px sans-serif';x.fillText(((max*(1-i/4))/1073741824).toFixed(1),2,y+3)}for(const [key,color] of keys){x.strokeStyle=color;x.lineWidth=2;x.beginPath();h.forEach((p,i)=>{let px=43+(w-52)*i/Math.max(1,h.length-1),py=15+(ht-35)*(1-(p[key]||0)/max);i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke()}document.getElementById('range').textContent=new Date(h[0].time).toLocaleString()+' — '+new Date(h.at(-1).time).toLocaleString();document.getElementById('legend').innerHTML=keys.map(([k,color,label])=>'<span><i class="dot" style="background:'+color+'"></i>'+label+'</span>').join('')}
+function graph(h){
+ if(!h.length)return;
+ const c=document.getElementById('chart'),dpr=devicePixelRatio||1,w=c.clientWidth,ht=270;
+ c.width=w*dpr;c.height=ht*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);x.clearRect(0,0,w,ht);
+ const keys=[['file_bytes','#7bb8ff','文件缓存'],['active_file_bytes','#ffb96b','活跃文件'],['anon_bytes','#eb91be','匿名内存'],['shmem_bytes','#73d79c','共享内存'],['current_bytes','#ffffff','内存总量']];
+ const good=h.filter(p=>p.valid!==false),max=Math.max(1,...good.map(p=>p.current_bytes||0),...good.map(p=>p.file_bytes||0))*1.1;
+ const first=Date.parse(h[0].time),span=Math.max(1,Date.parse(h.at(-1).time)-first);
+ x.strokeStyle='#34485b';x.lineWidth=1;
+ for(let i=0;i<5;i++){let y=15+(ht-35)*i/4;x.beginPath();x.moveTo(50,y);x.lineTo(w-8,y);x.stroke();x.fillStyle='#a8b5c5';x.font='11px sans-serif';x.fillText(((max*(1-i/4))/1073741824).toFixed(1),2,y+3)}
+ for(const [key,color] of keys){
+  x.strokeStyle=color;x.lineWidth=2;x.beginPath();let previous=null;
+  for(const p of h){
+   const t=Date.parse(p.time),value=p[key];
+   if(p.valid===false||!Number.isFinite(t)||!Number.isFinite(value)){previous=null;continue}
+   const px=51+(w-60)*(t-first)/span,py=15+(ht-35)*(1-value/max);
+   const gap=previous&&t-Date.parse(previous.time)>Math.max(10000,3*(p.sample_interval_ms||1000),3*(previous.sample_interval_ms||1000));
+   if(!previous||gap)x.moveTo(px,py);else x.lineTo(px,py);
+   previous=p;
+  }
+  x.stroke();
+ }
+ document.getElementById('range').textContent=new Date(h[0].time).toLocaleString()+' — '+new Date(h.at(-1).time).toLocaleString();
+ document.getElementById('legend').innerHTML=keys.map(([k,color,label])=>'<span><i class="dot" style="background:'+color+'"></i>'+label+'</span>').join('');
+}
 async function update(){try{let r=await fetch('/api/v1/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let serverTime=r.headers.get('X-CCG-Server-Time');render(await r.json(),serverTime)}catch(e){document.getElementById('state').textContent='连接异常 '+e.message;document.getElementById('state').className='badge bad'}}
 async function history(){try{let r=await fetch('/api/v1/history',{cache:'no-store'});if(r.ok)graph(await r.json())}catch(e){}}
 update();history();setInterval(update,2000);setInterval(history,15000);

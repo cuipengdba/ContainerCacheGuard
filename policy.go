@@ -23,6 +23,8 @@ type Metrics struct {
 	IOBytesPerSecond      float64   `json:"io_bytes_per_second"`
 	FileRefaults          int64     `json:"file_refaults"`
 	FileRefaultsPerSecond float64   `json:"file_refaults_per_second"`
+	FileRefaultsAvailable bool      `json:"file_refaults_available"`
+	FileRefaultRateValid  bool      `json:"file_refault_rate_valid"`
 	IOPSI                 *float64  `json:"io_psi_avg10"`
 	MemoryPSI             *float64  `json:"memory_psi_avg10"`
 	NodeAvailable         int64     `json:"host_memavailable_bytes"`
@@ -69,8 +71,13 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 	if m.BusinessPause {
 		return stop("BACKOFF", "business_pause")
 	}
-	if c.MaxFileRefaultsPerSecond > 0 && m.FileRefaultsPerSecond > c.MaxFileRefaultsPerSecond {
-		return stop("BACKOFF", "file_refault_rate")
+	if c.MaxFileRefaultsPerSecond > 0 {
+		if !m.FileRefaultRateValid {
+			return stop("SUSPENDED", "file_refault_baseline_unavailable")
+		}
+		if m.FileRefaultsPerSecond > c.MaxFileRefaultsPerSecond {
+			return stop("BACKOFF", "file_refault_rate")
+		}
 	}
 	if c.MaxBusinessP99MS > 0 && m.BusinessP99 != nil && *m.BusinessP99 > c.MaxBusinessP99MS {
 		return stop("BACKOFF", "business_latency")

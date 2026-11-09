@@ -30,7 +30,12 @@ func TestPolicySafety(t *testing.T) {
 		{"cpu", func(c *Config, m *Metrics) { m.CPUPercent = 6 }, false, "BACKOFF"},
 		{"rss", func(c *Config, m *Metrics) { m.RSS = c.MaxRSSBytes + 1 }, false, "BACKOFF"},
 		{"io", func(c *Config, m *Metrics) { c.MaxIOBytesPerSecond = 1; m.IOBytesPerSecond = 2 }, false, "BACKOFF"},
-		{"file_refault", func(c *Config, m *Metrics) { c.MaxFileRefaultsPerSecond = 1; m.FileRefaultsPerSecond = 2 }, false, "BACKOFF"},
+		{"file_refault", func(c *Config, m *Metrics) {
+			c.MaxFileRefaultsPerSecond = 1
+			m.FileRefaultRateValid = true
+			m.FileRefaultsPerSecond = 2
+		}, false, "BACKOFF"},
+		{"file_refault_unknown", func(c *Config, m *Metrics) { c.MaxFileRefaultsPerSecond = 1 }, false, "SUSPENDED"},
 		{"business", func(c *Config, m *Metrics) { m.BusinessPause = true }, false, "BACKOFF"},
 		{"pressure_wait", func(c *Config, m *Metrics) { c.Trigger = "pressure" }, false, "IDLE"},
 		{"always", func(c *Config, m *Metrics) { c.Trigger = "always"; m.File = 0 }, false, "CONTROL"},

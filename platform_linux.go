@@ -396,6 +396,12 @@ func newMetricReader(path string) (*metricReader, error) {
 }
 func (r *metricReader) sample(c Config) Metrics {
 	m := Metrics{Time: time.Now(), Cgroup: r.path}
+	defer func() {
+		if m.Error != "" {
+			// Do not compute a subsequent rate across a collection gap.
+			r.previous = Metrics{}
+		}
+	}()
 	f, e := safeOpen(r.path)
 	if e != nil {
 		m.Error = e.Error()
@@ -428,6 +434,7 @@ func (r *metricReader) sample(c Config) Metrics {
 			m.Error = "configured file-refault guard unavailable (memory.stat)"
 		}
 		m.FileRefaults = s["workingset_refault_file"]
+		_, m.FileRefaultsAvailable = s["workingset_refault_file"]
 		m.OOMKill = values(filepath.Join(r.path, "memory.events"))["oom_kill"]
 	} else {
 		m.Version = 1
@@ -498,14 +505,28 @@ func (r *metricReader) sample(c Config) Metrics {
 	if syscall.Getrusage(syscall.RUSAGE_SELF, &ru) == nil {
 		m.CPUSeconds = float64(ru.Utime.Sec+ru.Stime.Sec) + float64(ru.Utime.Usec+ru.Stime.Usec)/1e6
 	}
-	if !r.previous.Time.IsZero() {
-		dt := m.Time.Sub(r.previous.Time).Seconds()
+	dt := m.Time.Sub(r.previous.Time).Seconds()
+	if !r.previous.Time.IsZero() && dt > 0 {
 		m.IOBytesPerSecond = float64(max64(0, m.IOBytes-r.previous.IOBytes)) / dt
-		m.FileRefaultsPerSecond = float64(max64(0, m.FileRefaults-r.previous.FileRefaults)) / dt
 		m.CPUPercent = (m.CPUSeconds - r.previous.CPUSeconds) / dt * 100
 	}
+	setRefaultRate(&m, r.previous)
 	r.previous = m
 	return m
+}
+
+func setRefaultRate(m *Metrics, previous Metrics) {
+	m.FileRefaultsPerSecond = 0
+	m.FileRefaultRateValid = false
+	dt := m.Time.Sub(previous.Time).Seconds()
+	if !m.FileRefaultsAvailable || !previous.FileRefaultsAvailable ||
+		m.Version != 2 || previous.Version != 2 || m.Cgroup != previous.Cgroup ||
+		previous.Time.IsZero() || dt <= 0 || previous.Error != "" || m.Error != "" ||
+		m.FileRefaults < previous.FileRefaults {
+		return
+	}
+	m.FileRefaultsPerSecond = float64(m.FileRefaults-previous.FileRefaults) / dt
+	m.FileRefaultRateValid = true
 }
 func lockState(path string) (*os.File, error) {
 	dir := filepath.Dir(path)

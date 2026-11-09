@@ -21,6 +21,7 @@
 | `io_bandwidth` / `io_psi` | 可观测IO条件超限 | 保留退让并调查磁盘；io.stat堆叠设备可能重复计量 |
 | `business_pause` / `business_latency` | 外部业务信号要求退让 | 先处理业务异常；检查信号采集窗口和阈值 |
 | `metrics_unavailable` | 指标或已配置业务信号不可用 | 查真实cgroup挂载、文件权限、信号时效；缺失不能当成0 |
+| `file_refault_baseline_unavailable` | 已启用refault保护，但当前差分基线无效 | 首次启动等下个连续有效样本；持续出现则查内核字段、计数重置或采集错误，不把未知当零 |
 | `memory_critical_stop_speculative_reclaim` | 达到临界比例，默认pause策略生效 | 先确定是什么内存。低复用输出可单独验证bounded，不能普遍强开 |
 | `new_oom_kill` | v2事件计数较启动时增加 | 保守保持CRITICAL；调查后重启，不自动忘记事件 |
 | `worker_slow_or_blocked` | 单工作线程超过预期时间未返回 | 停止派发；排查文件系统/设备阻塞，不增加更多工作线程去堆积 |
@@ -46,6 +47,10 @@
 ## 索引或访问提示溢出
 
 `index_rotations` 上升表示文件数量超过有界工作索引，旧索引会轮换以便后续文件进入；`completed_inventory_sweeps` 为0表示尚未完整遍历目录，不能声称已覆盖所有文件。`inventory_overflow` 或 `hint_overflows` 上升表示其它目录/候选/提示预算受到限制。提示丢失不直接损坏文件；普通补扫仍在，但控制可能滞后。先检查实际文件数、目录数、工作时间与CPU，再调整max_files、max_directories、max_regions、max_hint_files或发现节奏。增加上限会增加内存成本，不能只把数字无限放大。
+
+## 新目录已经出现，为什么还没处理
+
+rc.7为事件发现保留25%的总发现额度。`pending_hint_paths`上升表示已收到提示但预算不足；`hint_discovery_retries`上升说明后续重试有发生，并不保证目录仍存在或能通过检查。`hint_queue_dropped`上升表示队列满或等待到期，需普通补扫兜底。先对照发现速率、watch数量、完整遍历次数和自身CPU，再决定是否调整。事件到来从不直接授权释放，写回和业务退让仍生效。
 
 ## 怎样确认停住了
 
