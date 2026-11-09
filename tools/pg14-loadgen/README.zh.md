@@ -36,4 +36,6 @@ python3 target94_loadgen.py --role dbs --rate 110 --clients 4 --target94 \
 
 在获批把94的DBS/HISDBS `shared_buffers` 分别调为6144/4096MB后、**无备份**时，20TPS单库180秒及60TPS+HIS0.5TPS双库300秒均完成，实际DBS20.13/59.37TPS，两库轻量SQL探针窗口失败0，节点`MemAvailable`最低约9.40/9.21GiB。110TPS+HIS0.5TPS目标300秒时，节点可用内存降至7GiB以下，DBS约220秒、HIS约190秒主动停止；随后一次持续110TPS重试也因内存保护被停止。两次均不能写成连续等压通过。分钟指标显示同时出现DBS匿名内存约2.56GiB尖峰，而普通文件缓存下降；这类内存不能由文件页释放工具处理。
 
+随后60TPS/HIS0.5TPS持续尝试在12:42因可用内存降至约6.04GiB由止损守护停止。进程快照和PG日志按容器PID对应：单个`pucbdm`查询后端匿名RSS约2.36GiB，查询包含1,431个SELECT分支；这次无备份，CCG仍为观察模式。12:50左右改为20TPS/HIS0.5TPS低档持续基线，7GiB自动暂停新轮次，5GiB止损并监测SQL失败/PG重启。低档持续运行的结果尚待观察，不能说已模拟171的同等压力，更不能说CCG解决了匿名内存峰值。
+
 94此后以60TPS+0.5TPS做较长观察时使用`--min-mem-available-gib 7`，另有目标94专用守护在SQL探针失败、PostgreSQL内部重启或`MemAvailable<6.5GiB`时停止两套模拟程序。**systemd单元active只代表生成器进程存在**；每轮还要查`target_tps`、实际事务数、`paused_low_memory`和真实运行秒数。暂停和被守护停止的时间必须从“达到171同压力”的统计中剔除。这个60TPS档低于171的DBS约105TPS中位数，不可称同强度复现。
