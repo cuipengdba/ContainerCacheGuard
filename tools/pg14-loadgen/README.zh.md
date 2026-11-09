@@ -31,3 +31,9 @@ python3 target94_loadgen.py --role dbs --rate 110 --clients 4 --target94 \
 程序每轮输出 JSON，包括目标速率、退出码、日志路径以及PG统计计数器前后值。对照171时应把`ccg_loadtest`与`clouddb`的事务增量分别列出，再看合计负载、`wal_bytes`、磁盘IO、业务响应时间及Kubernetes事件。此程序只模拟一部分写入统计，**不能重现171真实SQL、事务竞争、网络调用或逐表访问分布**。只有完整数据和同时段监控都到位后，才能把它作为CCG对照的一部分。
 
 2026-11-08修改前曾在空HISDBS的`clouddb.ccg_load`完成1TPS、60秒冒烟：pgbench返回0、实际72事务。该空库后来作为切换前回退点保留，冒烟结果不是当前独立测试库版本的正式压力结论；新版本须在真实数据上重新验证。
+
+## 94 的 2026-11-09 分档结果与自停说明
+
+在获批把94的DBS/HISDBS `shared_buffers` 分别调为6144/4096MB后、**无备份**时，20TPS单库180秒及60TPS+HIS0.5TPS双库300秒均完成，实际DBS20.13/59.37TPS，两库轻量SQL探针窗口失败0，节点`MemAvailable`最低约9.40/9.21GiB。110TPS+HIS0.5TPS目标300秒时，节点可用内存降至7GiB以下，DBS约220秒、HIS约190秒主动停止；随后一次持续110TPS重试也因内存保护被停止。两次均不能写成连续等压通过。分钟指标显示同时出现DBS匿名内存约2.56GiB尖峰，而普通文件缓存下降；这类内存不能由文件页释放工具处理。
+
+94此后以60TPS+0.5TPS做较长观察时使用`--min-mem-available-gib 7`，另有目标94专用守护在SQL探针失败、PostgreSQL内部重启或`MemAvailable<6.5GiB`时停止两套模拟程序。**systemd单元active只代表生成器进程存在**；每轮还要查`target_tps`、实际事务数、`paused_low_memory`和真实运行秒数。暂停和被守护停止的时间必须从“达到171同压力”的统计中剔除。这个60TPS档低于171的DBS约105TPS中位数，不可称同强度复现。
