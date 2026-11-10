@@ -1,5 +1,7 @@
 # ContainerCacheGuard
 
+[![版本](https://img.shields.io/github/v/release/cuipengdba/ContainerCacheGuard?include_prereleases&sort=semver&label=version&color=blue)](https://github.com/cuipengdba/ContainerCacheGuard/releases)
+
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
 本轮候选版本为 [**0.2.0-rc.7**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.7)，提供 amd64/arm64 静态二进制。它为新目录事件预留发现额度，并在额度不足时有界重试；网页增加内存分类解释、待发现队列状态和指标缺失提示。改动、测试范围和升级说明见 [版本说明](docs/RELEASE-v0.2.0-rc.7.zh.md)；原生双架构测试证据见对应发布页及 Actions。94 Kubernetes 实验使用 **PostgreSQL 14**，DBS/HISDBS真实数据已迁入；四容器正式接入和48小时压力验收尚未完成。基础机制测试及历史真实数据实验见 [测试报告](docs/TESTING.zh.md)。它不是“任何负载下永不驱逐”的保证：内存不足也可能来自应用堆、共享内存或资源规划，文件缓存治理只能解决其中一部分。
