@@ -7,7 +7,7 @@
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
-本轮候选版本为 [**0.2.0-rc.11**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.11)。按最新需求取消内置Web及全部HTTP服务，不再监听端口，改用详细中文日志和状态文件。每日一文件、最多30天或总量1GB自动清理，保留连续健康恢复及保护缺项暂停。[版本说明](docs/RELEASE-v0.2.0-rc.11.zh.md)、[日志手册](docs/LOGGING.zh.md)、[本次交付与测试](docs/RC11-DELIVERY.zh.md)提供细节。amd64/arm64各56项顶层race单测、24项CLI检查通过；已验证实际进程无TCP监听、依赖不含net/http。静态程序和原生测试证据随候选发布。94使用 **PostgreSQL 14**，真实数据48小时和整体业务安全验收仍未通过；文件缓存治理不能替代匿名内存与容量问题的处理。
+本轮候选版本为 [**0.2.0-rc.12**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.12)。新增严格部署预检、等待重扫索引优化、重复无效回收退避和离线小时统计；继续无Web、每日详细日志与30天/1GB清理。详见[版本说明](docs/RELEASE-v0.2.0-rc.12.zh.md)、[详细使用与参数](docs/RC12-USAGE.zh.md)、[本版验证](docs/RC12-DELIVERY.zh.md)。当前为候选回归阶段，发布记录会补充原生双架构结果；真实PG14业务48小时和整体安全验收仍未通过，文件缓存治理不能替代匿名内存与容量问题处理。
 
 **历史 0.1.0-rc.9 的实测边界：** 约198GiB全量备份中，源端file峰值11.92→2.07GiB、输出端5.96→3.19GiB，完整校验及独立恢复通过。但不限速校验仍使输出缓存升到5.76GiB；高强度回收下重复扫描读盘约翻倍，热点尾延迟明显变差。因此当前不建议将高吞吐实验配置直接用于全PGDATA自动执行。先观察、优先低复用产物、明确排除热点，再按业务指标验收。详见[完整实测结论](docs/RESULTS.zh.md)。
 

@@ -1,0 +1,23 @@
+{
+  "mode": "paths",
+  "action": "observe",
+  "paths": [
+    "/backup"
+  ],
+  "state_file": "/tmp/ccg-hisdbsbackup/status.json",
+  "log_directory": "/var/log/containercacheguard",
+  "log_keep_days": 30,
+  "log_max_total_bytes": 1000000000,
+  "log_timezone": "Asia/Shanghai",
+  "cache_target_bytes": 536870912,
+  "protect_seconds": 30,
+  "min_file_age_seconds": 30,
+  "reclaim_bytes_per_second": 33554432,
+  "initial_reclaim_bytes_per_second": 4194304,
+  "scan_bytes_per_second": 268435456,
+  "worker_budget_ms": 15,
+  "max_cpu_percent": 3,
+  "max_rss_bytes": 134217728,
+  "max_io_psi_avg10": 10,
+  "critical_mode": "pause"
+}

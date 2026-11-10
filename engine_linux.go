@@ -45,6 +45,16 @@ type Counters struct {
 	PendingHints          int      `json:"pending_hint_paths"`
 	HintRetries           uint64   `json:"hint_discovery_retries"`
 	HintDropped           uint64   `json:"hint_queue_dropped"`
+	FileScheduleVisits    uint64   `json:"file_schedule_visits"`
+	WaitingRescanVisits   uint64   `json:"waiting_rescan_visits"`
+	RecentWriteDeferrals  uint64   `json:"recent_write_deferrals"`
+	ChangedCandidates     uint64   `json:"changed_candidates"`
+	NonresidentCandidates uint64   `json:"nonresident_candidates"`
+	NoProgressBackoffs    uint64   `json:"no_progress_backoffs"`
+	SweepInProgress       bool     `json:"inventory_sweep_in_progress"`
+	SweepAgeSeconds       float64  `json:"inventory_sweep_age_seconds"`
+	LastSweepSeconds      float64  `json:"last_inventory_sweep_seconds"`
+	FileScanWaitSeconds   float64  `json:"file_scan_wait_seconds"`
 }
 type fileEntry struct {
 	Path     string
@@ -68,6 +78,7 @@ type region struct {
 	Due                   time.Time
 	Check                 bool
 	Attempts              int
+	NoProgress            int
 	Until                 time.Time
 }
 type budget struct {
@@ -105,6 +116,9 @@ type engine struct {
 	dirInfo                               dirEntry
 	nextSweep                             time.Time
 	sweepOpen                             bool
+	sweepStarted                          time.Time
+	scanIdleUntil, scanEarliest           time.Time
+	scanSkipped                           int
 	childFastUnavailable                  bool
 	files                                 []*fileEntry
 	known                                 map[string]*fileEntry
@@ -216,10 +230,12 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 			old.ID = id
 			old.Offset = 0
 			old.NextScan = time.Time{}
+			e.invalidateScanWait()
 		}
 		return
 	}
 	n := &fileEntry{Path: path, ID: id}
+	e.invalidateScanWait()
 	if len(e.known) >= e.c.MaxFiles {
 		// Keep a bounded working index while still visiting later files in a
 		// directory. A permanently full index would starve every file beyond
@@ -245,6 +261,7 @@ func (e *engine) finishSweep(now time.Time) {
 		return
 	}
 	e.stats.CompletedSweeps++
+	e.stats.LastSweepSeconds = maxFloat(0, now.Sub(e.sweepStarted).Seconds())
 	e.sweepOpen = false
 	// Very large trees can take longer than rescan_seconds to traverse. Start
 	// the quiet interval after completion so they do not rescan continuously.
@@ -267,6 +284,7 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 		e.nextSweep = now.Add(time.Duration(e.c.RescanSeconds) * time.Second)
 		e.stats.Sweeps++
 		e.sweepOpen = true
+		e.sweepStarted = now
 	}
 	for time.Now().Before(deadline) && e.discovery.take(1) {
 		if e.dir == nil {
@@ -350,6 +368,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	defer f.Close()
 	id, err := statFile(f)
 	if err != nil || !sameFile(id, r.ID) || !supportedFS(f) {
+		e.stats.ChangedCandidates++
 		e.removeRegion(r)
 		return
 	}
@@ -383,14 +402,26 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			e.stats.DeferredRetries++
 			return
 		}
+		if r.NoProgress > 0 && r.Attempts >= 3 && res > 0 {
+			// Keep bounded history through the cooldown. Dropping it here would let
+			// an ordinary rescan immediately recreate the same ineffective candidate.
+			r.Check = false
+			r.Attempts = 0
+			r.Due = now.Add(noProgressDelay(e.c, r.NoProgress))
+			r.Until = r.Due
+			e.stats.NoProgressBackoffs++
+			return
+		}
 		e.removeRegion(r)
 		return
 	}
 	if res == 0 {
+		e.stats.NonresidentCandidates++
 		e.removeRegion(r)
 		return
 	}
 	if now.Sub(time.Unix(0, id.Mtime)) < time.Duration(e.c.MinFileAgeSeconds)*time.Second {
+		e.stats.RecentWriteDeferrals++
 		r.Due = now.Add(time.Duration(e.c.MinFileAgeSeconds) * time.Second)
 		return
 	}
@@ -426,8 +457,11 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	e.stats.NetReductionBytes += reduction
 	if reduction == 0 {
 		e.stats.Ineffective++
-		r.Until = now.Add(time.Duration(e.c.CooldownSeconds) * time.Second)
+		r.NoProgress = minInt(4, r.NoProgress+1)
+		r.Until = now.Add(noProgressDelay(e.c, r.NoProgress))
 		e.rate = max64(e.c.InitialReclaimBytesPerSecond, e.rate/2)
+	} else {
+		r.NoProgress = 0
 	}
 	r.Before = res
 	r.After = after
@@ -449,7 +483,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		slice = 0.005
 	}
 	if slice < 0.001 {
-		return e.stats
+		return e.snapshot(now)
 	}
 	defer func() {
 		e.duty.tokens -= time.Since(now).Seconds()
@@ -515,8 +549,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	if e.hints != nil {
 		e.hints.sample(e, now, now.Add(time.Duration(slice*0.90*float64(time.Second))))
 	}
-	skipped := 0
-	for len(e.files) > 0 && time.Now().Before(deadline) && ctx.Err() == nil {
+	for !now.Before(e.scanIdleUntil) && len(e.files) > 0 && time.Now().Before(deadline) && ctx.Err() == nil {
 		if !e.ops.take(1) {
 			break
 		}
@@ -524,15 +557,15 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			e.cursor = 0
 		}
 		entry := e.files[e.cursor]
+		e.stats.FileScheduleVisits++
 		if now.Before(entry.NextScan) {
 			e.cursor++
-			skipped++
-			if skipped >= len(e.files) {
+			if e.deferScan(entry.NextScan) {
 				break
 			}
 			continue
 		}
-		skipped = 0
+		e.invalidateScanWait()
 		if entry.Offset >= entry.ID.Size {
 			entry.Offset = 0
 			entry.NextScan = now.Add(time.Duration(e.c.RescanSeconds) * time.Second)
@@ -557,6 +590,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 				e.files[e.cursor] = e.files[last]
 				e.files[last] = nil
 				e.files = e.files[:last]
+				e.invalidateScanWait()
 			} else {
 				e.failure(err)
 				e.cursor++
@@ -589,6 +623,56 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		e.track(entry, entry.Offset, length, res, now)
 		entry.Offset += length
 	}
+	return e.snapshot(now)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+func noProgressDelay(c Config, streak int) time.Duration {
+	streak = minInt(4, streak)
+	if streak < 1 {
+		streak = 1
+	}
+	return time.Duration(c.CooldownSeconds) * time.Second * time.Duration(1<<uint(streak-1))
+}
+func (e *engine) invalidateScanWait() {
+	e.scanIdleUntil, e.scanEarliest = time.Time{}, time.Time{}
+	e.scanSkipped = 0
+}
+
+// Account across worker slices, so a large sleeping index is traversed once
+// per wakeup rather than once per tiny time slice. New/changed entries reset it.
+func (e *engine) deferScan(until time.Time) bool {
+	e.stats.WaitingRescanVisits++
+	if e.scanEarliest.IsZero() || until.Before(e.scanEarliest) {
+		e.scanEarliest = until
+	}
+	e.scanSkipped++
+	if e.scanSkipped >= len(e.files) {
+		e.scanIdleUntil = e.scanEarliest
+		e.scanSkipped = 0
+		e.scanEarliest = time.Time{}
+		return true
+	}
+	return false
+}
+func (e *engine) snapshot(now time.Time) Counters {
+	e.stats.SweepInProgress = e.sweepOpen
+	e.stats.SweepAgeSeconds = 0
+	if e.sweepOpen {
+		e.stats.SweepAgeSeconds = maxFloat(0, now.Sub(e.sweepStarted).Seconds())
+	}
+	e.stats.FileScanWaitSeconds = maxFloat(0, e.scanIdleUntil.Sub(now).Seconds())
 	e.stats.Files = len(e.files)
 	e.stats.Directories = len(e.dirs)
 	e.stats.Regions = len(e.regions)

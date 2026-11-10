@@ -252,6 +252,8 @@ func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 			if err == nil && id.Dev == entry.ID.Dev && id.Ino == entry.ID.Ino {
 				entry.ID = id
 				entry.Offset = 0
+				entry.NextScan = time.Time{}
+				e.invalidateScanWait()
 			}
 			hint.offset = 0
 			hint.next = now.Add(time.Second)

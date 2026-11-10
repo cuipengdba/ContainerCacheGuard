@@ -56,6 +56,11 @@ jobs:
         run: |
           set -euo pipefail
           go test -run '^$' -bench '^BenchmarkDetailedStatusLog$' -benchtime=1000x -benchmem | tee logging-benchmark-results.log
+      - name: Sleeping index scheduling cost
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -run '^$' -bench '^BenchmarkSleepingIndex$' -benchtime=50x -benchmem | tee scheduling-benchmark-results.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

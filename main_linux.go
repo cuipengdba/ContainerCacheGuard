@@ -27,7 +27,8 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
 
 用法：
   containercacheguard init-config --mode auto|paths > config.json
-  containercacheguard doctor [--config config.json] [--path /data]
+  containercacheguard doctor [--config config.json] [--path /data] [--require-ready]
+  containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json]
   containercacheguard run --config config.json [--mode auto|paths] [--action observe|enforce]
   containercacheguard status [--state-file /tmp/containercacheguard/status.json]
   containercacheguard scan --path /data [--scan-bytes-per-second 268435456]
@@ -41,6 +42,8 @@ SIGUSR1 暂停新释放，SIGUSR2 恢复，SIGTERM/SIGINT 退出；配置修改�
 不提供Web/HTTP服务、不监听端口；通过每日日志和status状态文件查看。
 日志默认每天一个文件，最多30个日历日、合计1GB；目录/天数/容量/时区可配置。
 scan 是只读驻留扫描，输出不是热度；可能需要完整遍历，不属于常态轻量监控。
+doctor --require-ready采集两个样本，保护输入不齐返回非零；不会启用PSI或关闭保护。
+report离线读取每日日志，生成小时统计；不访问数据目录，不预测K8s驱逐。
 
 只操作已授权路径下支持的普通磁盘文件。不会删除文件、清空应用堆、清理全机缓存、
 修改 cgroup 限额或杀业务。fadvise 可能引起写回；驻留不等于冷热，无法保证零影响。
@@ -67,6 +70,9 @@ func entry(args []string) error {
 		return nil
 	}
 	cmd := args[0]
+	if cmd == "report" {
+		return reportCommand(args[1:])
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	config := fs.String("config", "", "JSON 配置文件")
@@ -82,6 +88,7 @@ func entry(args []string) error {
 	rate := fs.Int64("reclaim-bytes-per-second", -1, "每秒建议释放范围字节上限")
 	scanRate := fs.Int64("scan-bytes-per-second", -1, "每秒驻留查询覆盖字节上限")
 	duration := fs.Duration("duration", 0, "运行时长，例如 5m；0 常驻")
+	requireReady := fs.Bool("require-ready", false, "仅doctor：双样本保护输入预检，缺项返回非零")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, help); fs.PrintDefaults() }
 	if e := fs.Parse(args[1:]); e != nil {
 		if e == flag.ErrHelp {
@@ -91,6 +98,9 @@ func entry(args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return errors.New("unexpected positional arguments")
+	}
+	if *requireReady && cmd != "doctor" {
+		return errors.New("--require-ready is only supported by doctor")
 	}
 	c, e := loadConfig(*config)
 	if e != nil {
@@ -168,22 +178,36 @@ func entry(args []string) error {
 		result := map[string]any{"version": version, "architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "uid": os.Geteuid(), "mode": c.Mode, "action": c.Action, "roots": roots, "file_cache_backend": "mincore+fadvise", "other_caches": "diagnostic_only", "node_pressure_source": "host MemAvailable (not kubelet Summary)"}
 		result["web_service_enabled"] = false
 		result["deprecated_config_fields"] = c.deprecatedWebFields()
+		var m Metrics
+		readerErr := e
 		if e != nil {
 			result["metrics_error"] = e.Error()
 		} else {
-			m := r.sample(c)
+			m = r.sample(c)
+			if *requireReady {
+				time.Sleep(time.Duration(c.IntervalMS) * time.Millisecond)
+				m = r.sample(c)
+			}
+			business(c, &m)
 			result["metrics"] = m
 			result["protection"] = assessProtection(c, m)
 			if m.Error != "" {
 				e = fmt.Errorf("metrics unavailable: %s", m.Error)
 			}
 		}
-		output(result)
+		pre := preflight(c, m, readerErr, os.ReadFile)
+		result["preflight"] = pre
+		if err := output(result); err != nil {
+			return err
+		}
 		if e != nil {
 			return e
 		}
 		if len(roots) == 0 {
 			return errors.New("no eligible roots; set paths or auto_roots")
+		}
+		if *requireReady && !pre.ProtectionReady {
+			return errors.New("保护输入未就绪；详情见preflight和protection，未关闭任何保护")
 		}
 		return nil
 	}

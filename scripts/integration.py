@@ -147,6 +147,49 @@ def main():
         assert failed.returncode!=0 and 'daily logs unavailable' in failed.stderr
         assert not (w/'logfail/status.json').exists()
         checks.append('unsafe_log_destination_fails_before_worker_start')
+        # Strict doctor establishes rate baselines but never weakens guards.
+        cfg.update(action='observe',web_listen='',web_token_file='',cgroup_path='',log_directory='',state_file=str(w/'strict/status.json'))
+        config.write_text(json.dumps(cfg))
+        strict=json.loads(run([binary,'doctor','--config',config,'--require-ready']))
+        assert strict['preflight']['protection_inputs_ready'] and strict['protection']['ready']
+        checks.append('strict_doctor_establishes_two_sample_baseline')
+        cfg.update(business_signal=str(w/'missing-business-signal'),max_business_p99_ms=100)
+        config.write_text(json.dumps(cfg))
+        bad=subprocess.run([binary,'doctor','--config',str(config),'--require-ready'],capture_output=True,text=True,timeout=10)
+        assert bad.returncode!=0 and not json.loads(bad.stdout)['preflight']['protection_inputs_ready']
+        checks.append('strict_doctor_rejects_missing_enabled_business_input')
+        # Deliberately nonexistent cgroup proves report never collects metrics.
+        cfg.update(cgroup_path=str(w/'not-a-real-cgroup'))
+        config.write_text(json.dumps(cfg))
+        sample=json.loads(state.read_text())
+        at=datetime.datetime(2026,11,11,10,59,50,tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+        records=[]
+        for i in range(3):
+            item=json.loads(json.dumps(sample))
+            stamp=(at+datetime.timedelta(seconds=i*10)).isoformat()
+            item.update(time=stamp,event='status',pid=12345,version='fixture',action='observe',decision=dict(state='OBSERVE',allow=False,reason='observation_only'))
+            item['metrics'].update(time=stamp,cgroup='/nonexistent-offline-report',version=2)
+            item['counters'].update(advice_bytes=0,observed_net_reduction_bytes=0,observed_reappeared_bytes=0)
+            records.append(json.dumps(item))
+        reportdir=w/'reportlogs';reportdir.mkdir();source=reportdir/'containercacheguard-2026-11-11.log'
+        source.write_text('\n'.join(records)+'\n')
+        summary=json.loads(run([binary,'report','--config',config,'--log-directory',reportdir,'--format','json','--instance','DBS']))
+        assert len(summary['hours'])==2 and sum(h['observed_interval_seconds'] for h in summary['hours'])==20
+        assert all(h['advice_allowed_interval_seconds']==0 for h in summary['hours'])
+        checks.append('offline_report_does_not_read_configured_cgroup_or_data')
+        checks.append('hour_report_splits_boundary_and_labels_observe')
+        markdown=w/'hourly.md'
+        run([binary,'report','--log-file',source,'--output',markdown])
+        assert '小时统计' in markdown.read_text() and '不能证明业务安全' in markdown.read_text()
+        checks.append('offline_report_writes_chinese_markdown')
+        for flags in [['--log-file',source,'--output',source],['--log-file',source,'--max-gap','0s']]:
+            bad=subprocess.run([binary,'report',*map(str,flags)],capture_output=True,text=True,timeout=10)
+            assert bad.returncode!=0
+        checks.append('offline_report_rejects_overwrite_and_invalid_gap')
+        os.mkfifo(reportdir/'containercacheguard-2026-11-12.log',0o600)
+        bad=subprocess.run([binary,'report','--log-directory',str(reportdir)],capture_output=True,text=True,timeout=5)
+        assert bad.returncode!=0
+        checks.append('offline_report_rejects_fifo_without_blocking')
         report=dict(success=True,checks=checks,kernel=os.uname().release,arch=os.uname().machine,page_size=os.sysconf('SC_PAGE_SIZE'),initial_resident=initial['Resident'],kubernetes_eviction_test=False)
         if args.output:pathlib.Path(args.output).write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(report,indent=2))
