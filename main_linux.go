@@ -168,7 +168,11 @@ func entry(args []string) error {
 		if e != nil {
 			result["metrics_error"] = e.Error()
 		} else {
-			result["metrics"] = r.sample(c)
+			m := r.sample(c)
+			result["metrics"] = m
+			if m.Error != "" {
+				e = fmt.Errorf("metrics unavailable: %s", m.Error)
+			}
 		}
 		output(result)
 		if e != nil {
@@ -213,45 +217,68 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
-	Time              time.Time   `json:"time"`
-	Version           string      `json:"version"`
-	PID               int         `json:"pid"`
-	Mode              string      `json:"mode"`
-	Action            string      `json:"action"`
-	IntervalMS        int         `json:"sample_interval_ms"`
-	Decision          Decision    `json:"decision"`
-	Metrics           Metrics     `json:"metrics"`
-	Counters          Counters    `json:"counters"`
-	Roots             []string    `json:"roots"`
-	WorkerBusy        bool        `json:"worker_busy"`
-	WorkerBusySeconds float64     `json:"worker_busy_seconds"`
-	Paused            bool        `json:"paused"`
-	Degraded          []string    `json:"degraded"`
-	Diagnostics       Diagnostics `json:"diagnostics"`
+	Time              time.Time      `json:"time"`
+	Version           string         `json:"version"`
+	PID               int            `json:"pid"`
+	Mode              string         `json:"mode"`
+	Action            string         `json:"action"`
+	IntervalMS        int            `json:"sample_interval_ms"`
+	Decision          Decision       `json:"decision"`
+	Metrics           Metrics        `json:"metrics"`
+	Counters          Counters       `json:"counters"`
+	Roots             []string       `json:"roots"`
+	WorkerBusy        bool           `json:"worker_busy"`
+	WorkerBusySeconds float64        `json:"worker_busy_seconds"`
+	Paused            bool           `json:"paused"`
+	Degraded          []string       `json:"degraded"`
+	Diagnostics       Diagnostics    `json:"diagnostics"`
+	Recovery          RecoveryStatus `json:"recovery"`
 }
 
 func business(c Config, m *Metrics) {
 	if c.BusinessSignal == "" {
 		return
 	}
-	f, e := os.Open(c.BusinessSignal)
+	fd, e := syscall.Open(c.BusinessSignal, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if e != nil {
 		m.Error = "business signal unreadable"
 		return
 	}
+	f := os.NewFile(uintptr(fd), c.BusinessSignal)
 	defer f.Close()
+	id, e := statFile(f)
+	if e != nil || id.Mode&syscall.S_IFMT != syscall.S_IFREG {
+		m.Error = "business signal must be a regular file"
+		return
+	}
 	var v struct {
 		Time  time.Time `json:"time"`
 		P99MS *float64  `json:"p99_ms"`
 		Pause bool      `json:"pause"`
 	}
-	e = json.NewDecoder(io.LimitReader(f, 16384)).Decode(&v)
+	body, readErr := io.ReadAll(io.LimitReader(f, 16385))
+	if readErr != nil || len(body) > 16384 {
+		m.Error = "business signal too large or unreadable"
+		return
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	e = decoder.Decode(&v)
+	var extra any
+	if e == nil {
+		if decoder.Decode(&extra) != io.EOF {
+			e = errors.New("trailing business signal data")
+		}
+	}
 	if e != nil || v.Time.IsZero() || time.Since(v.Time) > time.Duration(c.SignalMaxAgeSeconds)*time.Second || time.Until(v.Time) > time.Second {
 		m.Error = "business signal invalid/stale"
 		return
 	}
 	if c.MaxBusinessP99MS > 0 && v.P99MS == nil {
 		m.Error = "business signal p99_ms missing"
+		return
+	}
+	if v.P99MS != nil && *v.P99MS < 0 {
+		m.Error = "business signal p99_ms must be nonnegative"
 		return
 	}
 	m.BusinessP99 = v.P99MS
@@ -312,6 +339,7 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 	oomBaseline := m.OOMKill
 	lastLog := time.Time{}
 	busySince := time.Time{}
+	var recovery recoveryGate
 	nextSample := time.Time{}
 	nextWork := time.Time{}
 	tick := time.NewTicker(20 * time.Millisecond)
@@ -362,18 +390,18 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 					s.Decision.State = "SUSPENDED"
 					s.Decision.Reason = "no_eligible_roots"
 				}
-				allow.Store(s.Decision.Allow)
 				if !busySince.IsZero() {
 					s.WorkerBusySeconds = now.Sub(busySince).Seconds()
 				} else {
 					s.WorkerBusySeconds = 0
 				}
 				if s.WorkerBusySeconds > 5 {
-					allow.Store(false)
 					s.Decision.Allow = false
 					s.Decision.State = "SUSPENDED"
 					s.Decision.Reason = "worker_slow_or_blocked"
 				}
+				s.Decision, s.Recovery = recovery.apply(c, s.Decision, now)
+				allow.Store(s.Decision.Allow)
 				s.Diagnostics = diagnose(c, m, s.Decision)
 				if e = atomicJSON(c.StateFile, s); e != nil {
 					allow.Store(false)

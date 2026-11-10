@@ -31,6 +31,7 @@ type Config struct {
 	IntervalMS                   int      `json:"interval_ms"`
 	LogIntervalSeconds           int      `json:"log_interval_seconds"`
 	WarmupSeconds                int      `json:"warmup_seconds"`
+	RecoveryHealthySeconds       int      `json:"recovery_healthy_seconds"`
 	ProtectSeconds               int      `json:"protect_seconds"`
 	MinFileAgeSeconds            int      `json:"min_file_age_seconds"`
 	CooldownSeconds              int      `json:"cooldown_seconds"`
@@ -71,7 +72,7 @@ func defaultConfig() Config {
 		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
 		StateFile:    "/tmp/containercacheguard/status.json", SignalMaxAgeSeconds: 10,
 		WebHistorySamples: 3600,
-		IntervalMS:        1000, LogIntervalSeconds: 10, WarmupSeconds: 60, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
+		IntervalMS:        1000, LogIntervalSeconds: 10, WarmupSeconds: 60, RecoveryHealthySeconds: 10, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
 		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, CriticalMode: "pause", MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
 		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
 		DiscoverEntriesPerSecond: 500, MaxFiles: 150000, MaxDirectories: 20000, MaxRegions: 8192, MaxOperationsPerSecond: 1000,
@@ -128,6 +129,12 @@ func (c Config) validate() error {
 	}
 	if c.WarmupSeconds < 0 || c.ProtectSeconds < 0 || c.MinFileAgeSeconds < 0 || c.CooldownSeconds < 1 {
 		return errors.New("保护时间不能为负；冷却时间必须为正")
+	}
+	if c.RecoveryHealthySeconds < 0 || c.RecoveryHealthySeconds > 3600 {
+		return errors.New("recovery_healthy_seconds 范围0..3600；0关闭持续健康等待")
+	}
+	if c.MaxBusinessP99MS < 0 {
+		return errors.New("max_business_p99_ms 不能为负")
 	}
 	if c.CacheTargetBytes < 0 || c.MaxDirtyBytes < 0 || c.MaxIOBytesPerSecond < 0 || c.MinNodeAvailableBytes < 0 {
 		return errors.New("字节阈值不能为负")

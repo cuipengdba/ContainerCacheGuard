@@ -35,7 +35,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           test -z "$(git status --porcelain)"
-          go build -trimpath -ldflags "-s -w -X main.version=0.2.0-rc.7 -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
+          version="$(cat VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]
+          go build -trimpath -ldflags "-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
           file dist/containercacheguard-linux-${{ matrix.arch }} | tee binary-info.txt
           readelf -h dist/containercacheguard-linux-${{ matrix.arch }} > elf-header.txt
           ! readelf -l dist/containercacheguard-linux-${{ matrix.arch }} | grep -q INTERP

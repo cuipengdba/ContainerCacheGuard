@@ -203,6 +203,7 @@ function render(s,serverTime){const m=s.metrics||{},age=Date.parse(serverTime)-D
   'OOM kill：'+(m.version===2?measured(m.oom_kill_total,String):'未知')+' · 建议范围：'+gib(s.counters.advice_bytes||0)+' · 净驻留下降：'+gib(s.counters.observed_net_reduction_bytes||0),
   '自身 RSS：'+decimal(m.self_rss_bytes/1048576)+' MiB · CPU：'+decimal(m.self_cpu_percent)+'%',
   '文件页 refault：'+(m.file_refault_rate_valid===true?decimal(m.file_refaults_per_second):'未知')+' 次/秒（不能单独归因于 CCG）',
+  '健康恢复：'+(s.recovery?.pending?'等待连续有效采样 '+(s.recovery.healthy_seconds||0).toFixed(1)+' / '+s.recovery.required_seconds+' 秒':'无需等待或已完成')+' · 恢复次数：'+(s.recovery?.recovery_resumes_total||0),
   '目录遍历：'+(s.counters.completed_inventory_sweeps||0)+'轮 · 文件索引轮换：'+(s.counters.index_rotations||0)+'次',
   '监控范围：'+(s.roots||[]).join(', '),
   '能力降级：'+(s.degraded||[]).join(', ')

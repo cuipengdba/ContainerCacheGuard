@@ -7,13 +7,13 @@
 Go 1.24 或更高，当前构建和 CI 使用 1.27.3。Python 仅用于可选构建辅助脚本和验收，不是产品运行依赖。
 
 ```sh
-python3 scripts/build.py --version 0.2.0-rc.7 --commit "$(git rev-parse --short HEAD)"
+python3 scripts/build.py --commit "$(git rev-parse --short HEAD)"
 # 或直接使用 Go：
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o containercacheguard .
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o containercacheguard-arm64 .
 ```
 
-输出目录 dist 包含双架构二进制和 SHA256SUMS。使用 `file` 和 `readelf` 验证无 INTERP/NEEDED，不能仅凭 CGO_ENABLED=0 就省略交付检查。
+`VERSION`是候选构建版本来源，构建脚本和CI读取同一文件；显式`--version`可用于自定义构建。输出目录 dist 包含双架构二进制和 SHA256SUMS。使用 `file` 和 `readelf` 验证无 INTERP/NEEDED，不能仅凭 CGO_ENABLED=0 就省略交付检查。
 
 ## 测试
 

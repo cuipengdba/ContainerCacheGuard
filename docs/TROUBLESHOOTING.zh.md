@@ -21,6 +21,7 @@
 | `io_bandwidth` / `io_psi` | 可观测IO条件超限 | 保留退让并调查磁盘；io.stat堆叠设备可能重复计量 |
 | `business_pause` / `business_latency` | 外部业务信号要求退让 | 先处理业务异常；检查信号采集窗口和阈值 |
 | `metrics_unavailable` | 指标或已配置业务信号不可用 | 查真实cgroup挂载、文件权限、信号时效；缺失不能当成0 |
+| `waiting_healthy_recovery` | 先前风险已解除，正在等待连续健康样本 | 查看recovery进度；中途异常/空窗/人工暂停会重置。核对采样频率，评估后可调整recovery_healthy_seconds；不要把等待误当卡死 |
 | `file_refault_baseline_unavailable` | 已启用refault保护，但当前差分基线无效 | 首次启动等下个连续有效样本；持续出现则查内核字段、计数重置或采集错误，不把未知当零 |
 | `memory_critical_stop_speculative_reclaim` | 达到临界比例，默认pause策略生效 | 先确定是什么内存。低复用输出可单独验证bounded，不能普遍强开 |
 | `new_oom_kill` | v2事件计数较启动时增加 | 保守保持CRITICAL；调查后重启，不自动忘记事件 |

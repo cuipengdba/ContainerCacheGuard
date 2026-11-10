@@ -38,6 +38,9 @@ func diagnose(c Config, m Metrics, d Decision) Diagnostics {
 	if c.Action == "enforce" && !d.Allow {
 		add("advice_not_allowed", "当前策略暂停新释放建议，原因见decision.reason；enforce标志不表示正在持续回收。")
 	}
+	if d.Reason == "waiting_healthy_recovery" {
+		add("healthy_recovery_wait", "风险解除后仍需连续有效的健康采样达到配置窗口；等待期间不发出新释放建议，中途异常或采样空窗会重新计时。")
+	}
 	if !m.FileRefaultRateValid {
 		add("refault_unknown", "当前文件页refault速率未知，可能缺少连续样本或内核字段；未知不能解释为零重读。")
 	}

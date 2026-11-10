@@ -59,6 +59,8 @@
 | `signal_max_age_seconds` | `10` | 业务信号允许的最大年龄；未来超过1秒的时间也拒绝 |
 | `max_business_p99_ms` | `0` | 大于0时要求信号包含 p99_ms，超过就退让；0不按 p99 判断 |
 
+业务信号必须是普通文件中的单个JSON对象，最多16KiB，p99_ms非负；多余JSON、负延迟、过期或缺少必要字段都会停止新释放。建议用临时文件加原子重命名更新，避免读取到半份JSON。
+
 业务信号例子（请写入真实当前时间并持续更新）：
 
 ```json
@@ -78,6 +80,7 @@ io.stat 在 device-mapper 等堆叠存储上可能同时列出逻辑盘和物理
 | `interval_ms` | `1000` | cgroup/自监控及决策采样间隔，100..60000毫秒 |
 | `log_interval_seconds` | `10` | 输出一条状态 JSON 的间隔，避免每个文件刷日志 |
 | `warmup_seconds` | `60` | 启动学习期，不执行释放 |
+| `recovery_healthy_seconds` | `10` | enforce曾触发安全退让后，需连续有效健康采样达到的秒数，范围0..3600；0关闭。首次健康启动不额外等；再次异常、人工暂停或样本间隔大于3倍interval_ms会重置恢复计时。正常IDLE也可贡献健康样本，但不会强制回收。健康指通过当前配置保护，不等于业务无风险 |
 | `protect_seconds` | `30` | 首次观察到一个驻留范围后至少等待多久，不能把到期等同于证明冷页 |
 | `min_file_age_seconds` | `30` | 距离文件最后修改的最短时间；正在持续改写的文件会跳过 |
 | `cooldown_seconds` | `60` | 再次驻留或无效释放后的保护/冷却时间 |
@@ -123,6 +126,7 @@ v2读取可见祖先的有限额与对应`memory.current`，记录占用比例�
 - `pending_hint_paths`：已收到事件但等待发现额度的路径数；`hint_discovery_retries`是从队列重新尝试发现的累计次数，不保证成功；`hint_queue_dropped`累计队列已满或到期丢弃数。队列去重，等待有效期至少60秒，仍以普通补扫兜底。
 - `diagnostics`：只解释当前可观测构成，不改变策略。`valid=false`时不可据此判断健康；`other_charged_bytes`是当前计费减普通文件页后的近似剩余，含匿名/共享/内核等，不能理解为另一类可直接清空的缓存；`file_target_excess_bytes`是超过文件软目标的估算值，不是承诺释放量。
 - `sample_interval_ms`：采样周期，网页用它识别长空窗；采集错误及空窗曲线断线，不以零值填补。
+- `recovery`：`pending`表示既往风险后的恢复窗口尚未完成；`healthy_seconds/required_seconds`说明计时进度；`guard_stop_transitions_total`为连续风险阶段的进入次数，`recovery_resumes_total`为健康窗口完成次数。窗口完成后当前策略仍可因低于目标保持IDLE；不保证一定发出建议。
 - `degraded`：例如 PSI 缺失、没有 kubelet Summary、其它缓存只诊断。未知不等于健康。
 - `worker_busy_seconds`：单工作队列执行延迟；超过5秒会停止派发新的建议，不启动替代工作线程制造堆积。
 
