@@ -39,4 +39,4 @@ cat /opt/ccg/state/dbs/status.json
 
 不要把已取消的HTTP端点继续放在Pod探针中，也不要用CCG状态故障触发数据库业务容器重启。需要监控CCG时，使用其独立进程看护和新鲜状态文件；不要把业务Pod的ready/liveness绑定到缓存治理成功与否。
 
-数据库仍需独立采集SQL错误和p95/p99、启动时间、备份/校验结果、Pod重启、cgroup OOM、节点可用内存和Kubelet Evicted/MemoryPressure事件。文件日志和本地状态不能替代这些业务验收。源服务器保持只读；取消HTTP代码不表示已在任何现场容器升级。
+数据库仍需独立采集SQL错误和p95/p99、启动时间、备份/校验结果、Pod重启、cgroup OOM、节点可用内存和Kubelet Evicted/MemoryPressure事件。文件日志和本地状态不能替代这些业务验收。源服务器保持只读；94实际替换及现有采集器兼容结果见[四实例部署记录](deployment-rc11-four-containers.zh.md)，其中PSI缺失仍是明确限制。
