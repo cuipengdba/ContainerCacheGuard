@@ -1,0 +1,154 @@
+{
+  "change": "User requested DBS CPU30 memory25 IO40; HISDBS CPU30 memory35 IO40",
+  "time_server": "2026-11-10T21:58:15.400214+08:00",
+  "database_or_container_restart": false,
+  "method": "atomic configuration update and restart only the CRG helper; reuse the same-version owned journal",
+  "containers": {
+    "dbs": {
+      "cid": "2fbe9d78fad6d68cd33781cf32ad500877c13ff9e09fd5fc89288fffb8949c66",
+      "container_id_unchanged": true,
+      "database_checks_unchanged": {
+        "system_id": true,
+        "databases": true,
+        "relations": true,
+        "namespaces": true,
+        "started": true,
+        "shared_buffers": true,
+        "work_mem": true,
+        "maintenance_work_mem": true,
+        "autovacuum_work_mem": true,
+        "max_connections": true
+      },
+      "before_percentages": {
+        "cpu_percent": 35,
+        "memory_percent": 45,
+        "io_percent": 60
+      },
+      "percentages": {
+        "cpu_percent": 30,
+        "memory_percent": 25,
+        "io_percent": 40
+      },
+      "cpu_max": "840000 100000",
+      "memory_max": "16603635712",
+      "memory_GiB": 15.463340759277344,
+      "io_max": "253:0 rbps=1538183604 wbps=1809852654 riops=13400 wiops=13114",
+      "crg_state": "managed",
+      "crg_items": [
+        {
+          "file": "cpu.max",
+          "value": "840000 100000",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "memory.max",
+          "value": "16603635712",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "io.max",
+          "device": "253:0",
+          "device_identity": "f6511f6b6da7fc3dfe55193dfb4cc767b0468cdfaa61e788551312beee43a980",
+          "value": "rbps=1538183604 wbps=1809852654 riops=13400 wiops=13114",
+          "state": "applied",
+          "detail": "already at desired value"
+        }
+      ],
+      "automatic_io_state": "reused",
+      "memory_events_before": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory_events_after": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "sql_probe_ms": 2778.797528706491,
+      "api": {
+        "code": 200,
+        "body": {
+          "Result": "000",
+          "Reason": ""
+        },
+        "probe_ms": 11.387106031179428
+      },
+      "ccg_mode": "auto",
+      "ccg_action": "enforce",
+      "ccg_decision": {
+        "state": "CONTROL",
+        "reason": "cache_budget_exceeded",
+        "allow": true,
+        "cache_target_bytes": 2147483648
+      }
+    },
+    "hisdbs": {
+      "cid": "9232ebc73c4fe18c2a8083c6a2e778190bdac82985677a3d958c1ad667bd64f9",
+      "container_id_unchanged": true,
+      "database_checks_unchanged": {
+        "system_id": true,
+        "databases": true,
+        "relations": true,
+        "namespaces": true,
+        "started": true,
+        "shared_buffers": true,
+        "work_mem": true,
+        "maintenance_work_mem": true,
+        "autovacuum_work_mem": true,
+        "max_connections": true
+      },
+      "before_percentages": {
+        "cpu_percent": 35,
+        "memory_percent": 25,
+        "io_percent": 60
+      },
+      "percentages": {
+        "cpu_percent": 30,
+        "memory_percent": 35,
+        "io_percent": 40
+      },
+      "cpu_max": "840000 100000",
+      "memory_max": "23245090816",
+      "memory_GiB": 21.648677825927734,
+      "io_max": "253:0 rbps=1538183604 wbps=1809852654 riops=13400 wiops=13114",
+      "crg_state": "managed",
+      "crg_items": [
+        {
+          "file": "cpu.max",
+          "value": "840000 100000",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "memory.max",
+          "value": "23245090816",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "io.max",
+          "device": "253:0",
+          "device_identity": "f6511f6b6da7fc3dfe55193dfb4cc767b0468cdfaa61e788551312beee43a980",
+          "value": "rbps=1538183604 wbps=1809852654 riops=13400 wiops=13114",
+          "state": "applied",
+          "detail": "already at desired value"
+        }
+      ],
+      "automatic_io_state": "reused",
+      "memory_events_before": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory_events_after": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "sql_probe_ms": 336.8935724720359,
+      "api": {
+        "code": 200,
+        "body": {
+          "Result": "000",
+          "Reason": ""
+        },
+        "probe_ms": 8.525817655026913
+      },
+      "ccg_mode": "auto",
+      "ccg_action": "enforce",
+      "ccg_decision": {
+        "state": "IDLE",
+        "reason": "below_cache_target",
+        "allow": false,
+        "cache_target_bytes": 2147483648
+      }
+    }
+  }
+}

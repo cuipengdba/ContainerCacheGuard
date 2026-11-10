@@ -1,12 +1,37 @@
 # 171 节点 DBS / HISDBS 双组件升级实测（2026-11-10）
 
+## 最新百分比调整（2026-11-10，覆盖下方升级时参数）
+
+用户随后明确指定DBS内存25%、CPU30%、IO40%；HISDBS内存35%、CPU30%、IO40。已按指定值生效：
+
+| 参数 | DBS | HISDBS |
+|---|---:|---:|
+| cpu_percent | 30 | 30 |
+| memory_percent | 25 | 35 |
+| io_percent | 40 | 40 |
+| CPU上限 / cpu.max | 8.4核 / `840000 100000` | 8.4核 / `840000 100000` |
+| memory.max | 16603635712字节（15.46GiB） | 23245090816字节（21.65GiB） |
+| 253:0 rbps / wbps | 1538183604 / 1809852654 | 1538183604 / 1809852654 |
+| 253:0 riops / wiops | 13400 / 13114 | 13400 / 13114 |
+
+本次仅备份并原子替换两份CRG配置，再让supervisor重新启动各自的CRG helper加载新值。没有重启数据库或容器；容器ID和`pg_postmaster_start_time()`前后相同，SQL/API正常，memory.events未增加OOM。DBS下调前检查了当前内存与新上限之间的余量，CRG自己的5%+16MiB余量、增长和事件检查保留；没有强制清全局缓存。HISDBS为同一版本、同一cgroup/journal内的上调，按owned原值规则应用。
+
+首次自动验收脚本将无journal上下文的`doctor`保守预览值当作HISDBS上调目标，导致等待超时；实际限制已成功生效。随后独立读取运行Agent的计划和三项cgroup回读，均与上表一致，并修正验收比较逻辑。完整脱敏前后核对见[retune-summary.json](deployment-upgrade-20261110/retune-summary.json)。
+
+两库内存上限合计约37.11GiB，占宿主60%，低于51.85GiB父级上限；仍是上限而非预留。CCG的auto/enforce、2GiB软目标和既有保护配置保持不变。当前完整配置文件`dbs.crg.json` / `hisdbs.crg.json`已更新，`test-summary.json`保留原升级测试快照，`retune-summary.json`记录本次改值。监控图表和每小时自动报告同步使用新值；小时窗口内若发生限额变化，会列出采样观察到的变更时间和前后值，累计量不重置。
+
+查看进程时使用二进制实际名称：`ps -ef | grep -E '[c]rg|[c]ontainercacheguard'`，对应 `/opt/guards/bin/crg run --config /opt/guards/config/crg.json` 和 `/opt/guards/bin/containercacheguard run --config /opt/guards/config/ccg.json`。Deployment名称为`dbs-11099` / `hisdbs-11102`，namespace为`puc`；应核对当前容器ID。
+
+以下为本次版本升级时的历史记录，参数已由上表取代。
+
+
 本次在既有 DBS、HISDBS 容器中，将 CRG 从 `v0.1.0-rc.2` 升级到 **`v0.1.0-rc.3-preview.1`**，CCG 从 `0.2.0-rc.9` 升级到 **`0.2.0-rc.11`**。两者均为已发布的预览/候选版本，不作为稳定版或长期业务验收结论。沿用原 PostgreSQL 数据挂载，逐个正常停库、Recreate 重建并恢复 SQL/API；没有新建备份容器、初始化新库或修改数据库内存参数。
 
 **本页取代同日首次接入记录中的旧版本和统一 percent 配置。** 原 13/15GiB 方案和旧 CCG HTTP 探针只作为历史事实保留。
 
-## 最终百分比与内核回读
+## 升级时的百分比与内核回读（历史）
 
-用户本次提出 CPU35%、内存45%、IO60%，并允许按现场情况调整。宿主机为28个逻辑CPU、MemTotal=66414546944字节（61.85337GiB）；`kubepods.slice` 父级内存上限55677128704字节（51.85337GiB）。两库同时45%会合计55.67GiB，超过父级上限。因此 **DBS保留45%，HISDBS按现场约2.4GiB用量设25%**；两库内存上限合计43.30GiB，为父组留下约8.55GiB空间。此余量仍与父组内其他占用共享，不是预留保证。
+版本升级时用户提出 CPU35%、内存45%、IO60%，并允许按现场情况调整。宿主机为28个逻辑CPU、MemTotal=66414546944字节（61.85337GiB）；`kubepods.slice` 父级内存上限55677128704字节（51.85337GiB）。两库同时45%会合计55.67GiB，超过父级上限。因此 **DBS保留45%，HISDBS按现场约2.4GiB用量设25%**；两库内存上限合计43.30GiB，为父组留下约8.55GiB空间。此余量仍与父组内其他占用共享，不是预留保证。
 
 | 项目 | DBS | HISDBS |
 |---|---:|---:|

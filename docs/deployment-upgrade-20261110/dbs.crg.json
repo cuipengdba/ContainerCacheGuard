@@ -1,7 +1,7 @@
 {
-  "cpu_percent": 35,
-  "memory_percent": 45,
-  "io_percent": 60,
+  "cpu_percent": 30,
+  "memory_percent": 25,
+  "io_percent": 40,
   "mode": "enforce",
   "state_dir": "/tmp/container-guards/crg",
   "io_profile": "/opt/guards-runtime/io-profile.json",
