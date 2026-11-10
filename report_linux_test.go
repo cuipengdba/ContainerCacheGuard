@@ -174,6 +174,32 @@ func TestReportCounterOverflowFailsInsteadOfWrapping(t *testing.T) {
 		t.Fatal("overflow accepted")
 	}
 }
+func TestReportLifecycleEventsResetSamePIDBaseline(t *testing.T) {
+	a := reportTestAggregator(t)
+	at := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	var input bytes.Buffer
+	enc := json.NewEncoder(&input)
+	enc.Encode(map[string]any{"event": "daemon_started", "time": at.Add(-time.Second)})
+	enc.Encode(statusLogRecord{Status: reportTestSample(at, 5), Event: "status"})
+	enc.Encode(statusLogRecord{Status: reportTestSample(at.Add(10*time.Second), 10), Event: "status"})
+	enc.Encode(map[string]any{"event": "daemon_stopped", "time": at.Add(11 * time.Second)})
+	enc.Encode(map[string]any{"event": "daemon_started", "time": at.Add(12 * time.Second)})
+	// Same PID/version/path, monotonic counters: only lifecycle events can
+	// distinguish the restart from uninterrupted work in these legacy fields.
+	enc.Encode(statusLogRecord{Status: reportTestSample(at.Add(20*time.Second), 100), Event: "status"})
+	enc.Encode(statusLogRecord{Status: reportTestSample(at.Add(30*time.Second), 110), Event: "status"})
+	if err := a.read(&input); err != nil {
+		t.Fatal(err)
+	}
+	r, err := a.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := r.Hours[0]
+	if h.AdviceBytes != 15 || h.CounterIntervals != 2 || h.UnbridgedIntervals != 1 || h.ObservedSeconds != 20 || r.IgnoredEvents != 3 {
+		t.Fatalf("restart bridged: %+v %+v", r, h)
+	}
+}
 func TestReportCLIIsOfflineAndRefusesUnsafeFiles(t *testing.T) {
 	w := t.TempDir()
 	source := filepath.Join(w, "events.jsonl")

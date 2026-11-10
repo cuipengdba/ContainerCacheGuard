@@ -65,14 +65,16 @@ type reportOptions struct {
 	instance    string
 }
 type reportAggregator struct {
-	report   OfflineReport
-	options  reportOptions
-	buckets  map[string]*HourReport
-	previous map[string]Status
+	report      OfflineReport
+	options     reportOptions
+	buckets     map[string]*HourReport
+	previous    map[string]Status
+	generations map[string]uint64
+	generation  uint64
 }
 
 func newReportAggregator(o reportOptions) *reportAggregator {
-	return &reportAggregator{options: o, buckets: map[string]*HourReport{}, previous: map[string]Status{}, report: OfflineReport{
+	return &reportAggregator{options: o, buckets: map[string]*HourReport{}, previous: map[string]Status{}, generations: map[string]uint64{}, report: OfflineReport{
 		Version: version, Instance: o.instance, Timezone: o.location.String(), MaxGapSeconds: o.maxGap.Seconds(), Hours: []*HourReport{},
 		Notes: []string{
 			"仅包含有日志或有效短间隔的小时；没有记录的小时不能视为健康。峰值是日志采样峰值，不是连续真实峰值。",
@@ -190,7 +192,7 @@ func (a *reportAggregator) add(s Status) error {
 	}
 	if exists {
 		gap := s.Time.Sub(prev.Time)
-		continuous := gap > 0 && gap <= a.options.maxGap && s.PID == prev.PID && s.Version == prev.Version
+		continuous := gap > 0 && gap <= a.options.maxGap && s.PID == prev.PID && s.Version == prev.Version && a.generations[scope] == a.generation
 		if continuous {
 			// Split time at local-hour boundaries; do not invent duration for gaps.
 			for cur := prev.Time; cur.Before(s.Time); {
@@ -231,6 +233,7 @@ func (a *reportAggregator) add(s Status) error {
 		}
 	}
 	a.previous[scope] = s
+	a.generations[scope] = a.generation
 	return nil
 }
 func reportState(s string) string {
@@ -260,6 +263,12 @@ func (a *reportAggregator) read(r io.Reader) error {
 		}
 		if envelope.Event != "status" && !(envelope.Event == "" && envelope.Metrics != nil) {
 			a.report.IgnoredEvents++
+			if envelope.Event == "daemon_started" || envelope.Event == "daemon_stopped" {
+				if a.generation == math.MaxUint64 {
+					return errors.New("日志生命周期计数溢出")
+				}
+				a.generation++
+			}
 			continue
 		}
 		var s Status
