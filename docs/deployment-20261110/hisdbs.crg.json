@@ -1,0 +1,11 @@
+{
+  "percent": 24.25090300409714,
+  "mode": "enforce",
+  "state_dir": "/tmp/container-guards/crg",
+  "io_profile": "/opt/guards/config/io-profile.json",
+  "interval_seconds": 15,
+  "data_paths": [
+    "/opt/postgresql/pgdata",
+    "/opt/postgresql/basebackup"
+  ]
+}

@@ -1,0 +1,192 @@
+{
+  "date": "2026-11-10",
+  "timezone": "Asia/Shanghai",
+  "host_memory_bytes": 66414546944,
+  "online_cpus": 28,
+  "versions": {
+    "crg": "v0.1.0-rc.2",
+    "ccg": "0.2.0-rc.9"
+  },
+  "containers": {
+    "dbs": {
+      "percent": 21.01744927021752,
+      "cpu_max": "588488 100000",
+      "memory_max_bytes": 13958643712,
+      "io_max": "253:0 rbps=808217396 wbps=950962158 riops=7041 wiops=6890",
+      "memory_current_bytes": 10756100096,
+      "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "crg_state": "managed",
+      "ccg_mode": "auto",
+      "ccg_action": "enforce",
+      "ccg_decision": {
+        "state": "CONTROL",
+        "reason": "cache_budget_exceeded",
+        "allow": true,
+        "cache_target_bytes": 2147483648
+      },
+      "ccg_counters": {
+        "detected_roots": [
+          "/opt/sql",
+          "/opt/hbp",
+          "/opt/postgresql",
+          "/usr/share/zoneinfo/UTC",
+          "/var/log"
+        ],
+        "indexed_files": 17432,
+        "pending_directories": 13,
+        "tracked_regions": 0,
+        "discovered_entries": 129197,
+        "inventory_overflow": 1445,
+        "index_rotations": 0,
+        "errors": 1,
+        "last_error": "no such device or address",
+        "sampled_region_bytes": 24616919040,
+        "sampled_resident_bytes_cumulative": 5799936,
+        "advice_bytes": 4231168,
+        "observed_net_reduction_bytes": 569344,
+        "observed_reappeared_bytes": 0,
+        "protected_regions": 0,
+        "ineffective_advice": 0,
+        "deferred_retries": 0,
+        "inventory_sweeps": 1,
+        "completed_inventory_sweeps": 0,
+        "fast_discovery_fallback": false,
+        "current_advice_rate_bytes_per_second": 16777216,
+        "hint_events": 157,
+        "hint_overflows": 20535,
+        "directory_watches": 1024,
+        "hint_files": 1,
+        "access_hints_available": true,
+        "pending_hint_paths": 0,
+        "hint_discovery_retries": 0,
+        "hint_queue_dropped": 0
+      },
+      "ccg_degraded": [
+        "io_PSI_unavailable",
+        "memory_PSI_unavailable",
+        "no_kubelet_summary",
+        "application_heap_shmem_slab_not_reclaimed"
+      ],
+      "ccg_endpoints": {
+        "healthz": {
+          "status": 200,
+          "body": "ok\n"
+        },
+        "readyz": {
+          "status": 200,
+          "body": "{\"ready\":true,\"reason\":\"monitoring_ready\"}\n"
+        },
+        "metrics": {
+          "status": 200,
+          "body": "ccg_monitoring_ready 1\nccg_policy_state{state=\"OBSERVE\"} 0\nccg_policy_state{state=\"IDLE\"} 0\nccg_policy_state{state=\"CONTROL\"} 1\nccg_policy_state{state=\"CONTROL_CRITICAL\"} 0\nccg_policy_state{state=\"BACKOFF\"} 0\nccg_policy_state{state=\"CRITICAL\"} 0\nccg_policy_state{state=\"SUSPENDED\"} 0\nccg_policy_state{state=\"STOPPED\"} 0\nccg_policy_state{state=\"UNKNOWN\"} 0\nccg_guard_stops_total 5\nccg_file_advice_bytes_total 4.231168e+06\nccg_observed_net_reduction_bytes_total 569344\nccg_inventory_sweeps_completed_total 0"
+        }
+      },
+      "sql_ok": true,
+      "api": {
+        "code": 200,
+        "body": "{\"Result\": \"000\", \"Reason\": \"\"}"
+      },
+      "data_catalog_comparison": {
+        "system_id": true,
+        "databases": true,
+        "relations": true,
+        "namespaces": true
+      },
+      "shared_buffers": "8960MB",
+      "postgres_started": "2026-11-10T15:03:41.551747+08:00"
+    },
+    "hisdbs": {
+      "percent": 24.25090300409714,
+      "cpu_max": "679025 100000",
+      "memory_max_bytes": 16106127360,
+      "io_max": "253:0 rbps=932558534 wbps=1097264029 riops=8124 wiops=7951",
+      "memory_current_bytes": 2504933376,
+      "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "crg_state": "managed",
+      "ccg_mode": "auto",
+      "ccg_action": "enforce",
+      "ccg_decision": {
+        "state": "IDLE",
+        "reason": "below_cache_target",
+        "allow": false,
+        "cache_target_bytes": 2147483648
+      },
+      "ccg_counters": {
+        "detected_roots": [
+          "/data",
+          "/opt/postgresql",
+          "/var/log",
+          "/usr/share/zoneinfo/UTC"
+        ],
+        "indexed_files": 16,
+        "pending_directories": 19661,
+        "tracked_regions": 4,
+        "discovered_entries": 21905,
+        "inventory_overflow": 1444,
+        "index_rotations": 0,
+        "errors": 1,
+        "last_error": "no such device or address",
+        "sampled_region_bytes": 9336406016,
+        "sampled_resident_bytes_cumulative": 676020224,
+        "advice_bytes": 0,
+        "observed_net_reduction_bytes": 0,
+        "observed_reappeared_bytes": 0,
+        "protected_regions": 0,
+        "ineffective_advice": 0,
+        "deferred_retries": 0,
+        "inventory_sweeps": 1,
+        "completed_inventory_sweeps": 0,
+        "fast_discovery_fallback": false,
+        "current_advice_rate_bytes_per_second": 4194304,
+        "hint_events": 96,
+        "hint_overflows": 20460,
+        "directory_watches": 1024,
+        "hint_files": 1,
+        "access_hints_available": true,
+        "pending_hint_paths": 0,
+        "hint_discovery_retries": 0,
+        "hint_queue_dropped": 0
+      },
+      "ccg_degraded": [
+        "io_PSI_unavailable",
+        "memory_PSI_unavailable",
+        "no_kubelet_summary",
+        "application_heap_shmem_slab_not_reclaimed"
+      ],
+      "ccg_endpoints": {
+        "healthz": {
+          "status": 200,
+          "body": "ok\n"
+        },
+        "readyz": {
+          "status": 200,
+          "body": "{\"ready\":true,\"reason\":\"monitoring_ready\"}\n"
+        },
+        "metrics": {
+          "status": 200,
+          "body": "ccg_monitoring_ready 1\nccg_policy_state{state=\"OBSERVE\"} 0\nccg_policy_state{state=\"IDLE\"} 1\nccg_policy_state{state=\"CONTROL\"} 0\nccg_policy_state{state=\"CONTROL_CRITICAL\"} 0\nccg_policy_state{state=\"BACKOFF\"} 0\nccg_policy_state{state=\"CRITICAL\"} 0\nccg_policy_state{state=\"SUSPENDED\"} 0\nccg_policy_state{state=\"STOPPED\"} 0\nccg_policy_state{state=\"UNKNOWN\"} 0\nccg_guard_stops_total 3\nccg_file_advice_bytes_total 0\nccg_observed_net_reduction_bytes_total 0\nccg_inventory_sweeps_completed_total 0"
+        }
+      },
+      "sql_ok": true,
+      "api": {
+        "code": 200,
+        "body": "{\"Result\": \"000\", \"Reason\": \"\"}"
+      },
+      "data_catalog_comparison": {
+        "system_id": true,
+        "databases": true,
+        "relations": true,
+        "namespaces": true
+      },
+      "shared_buffers": "8960MB",
+      "postgres_started": "2026-11-10T15:08:21.393072+08:00"
+    }
+  },
+  "limitations": [
+    "Short deployment smoke check only; no full-table checksums or recovery test",
+    "No extra backup containers created",
+    "Existing vendor cache cleaning retained; CCG effect is not isolated",
+    "PSI unavailable in this environment",
+    "CCG inventory has not completed a full sweep at snapshot time"
+  ]
+}
