@@ -87,6 +87,11 @@ def main():
         checks.append('detailed_chinese_summary_and_interval_changes')
         assert len((w/'daemon.log').read_text().splitlines())==len(events)
         checks.append('console_and_daily_file_receive_same_records')
+        real_report=json.loads(run([binary,'report','--log-directory',daily,'--format','json','--instance','native-regression']))
+        assert sum(h['samples'] for h in real_report['hours'])==len(statuses)
+        assert real_report['ignored_non_status_events']==len(events)-len(statuses)
+        assert real_report['duplicate_or_out_of_order_samples']==0
+        checks.append('offline_report_accepts_actual_daemon_daily_log')
         started=time.monotonic();timed=subprocess.run([binary,'scan','--path',str(file),'--scan-bytes-per-second',str(4<<20),'--duration','100ms'],capture_output=True,text=True,timeout=3);assert timed.returncode!=0 and time.monotonic()-started<2;assert json.loads(timed.stdout)['Complete'] is False;checks.append('scan_deadline_inside_large_file')
         # A real signal flap must not restart advice on its first good sample.
         cfg.update(mode='paths',action='enforce',recovery_healthy_seconds=2,
