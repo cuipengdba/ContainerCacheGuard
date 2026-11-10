@@ -4,13 +4,13 @@
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
-本轮候选版本为 [**0.2.0-rc.9**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.9)。它保留rc.8的连续健康恢复，并增加标准Prometheus指标、进程健康和监控就绪接口；所有接口复用只读Web认证，抓取只读快照，不额外扫描目录。指标错误、过期或字段缺失明确显示不可用。[版本说明](docs/RELEASE-v0.2.0-rc.9.zh.md)、[监控接入](docs/MONITORING.zh.md)、[两版本计划](docs/NEXT-TWO-VERSIONS.zh.md)、[本次交付与测试](docs/TWO-VERSIONS-DELIVERY.zh.md)提供细节。amd64/arm64静态二进制与原生测试证据随候选发布。94使用 **PostgreSQL 14**，真实数据48小时和整体业务安全验收仍未通过；文件缓存治理不能替代匿名内存与容量问题的处理。
+本轮候选版本为 [**0.2.0-rc.10**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.10)。新增每日日志及自动清理，补充已启用保护指标缺失时暂停回收；保留连续健康恢复、Prometheus和只读Web。[版本说明](docs/RELEASE-v0.2.0-rc.10.zh.md)、[日志手册](docs/LOGGING.zh.md)、[本次交付与测试](docs/RC10-DELIVERY.zh.md)提供细节。amd64/arm64各58项顶层race单测、18项CLI和14项网页检查通过；静态二进制及测试证据随候选发布。94使用 **PostgreSQL 14**，真实数据48小时和整体业务安全验收仍未通过；文件缓存治理不能替代匿名内存与容量问题的处理。
 
 **历史 0.1.0-rc.9 的实测边界：** 约198GiB全量备份中，源端file峰值11.92→2.07GiB、输出端5.96→3.19GiB，完整校验及独立恢复通过。但不限速校验仍使输出缓存升到5.76GiB；高强度回收下重复扫描读盘约翻倍，热点尾延迟明显变差。因此当前不建议将高吞吐实验配置直接用于全PGDATA自动执行。先观察、优先低复用产物、明确排除热点，再按业务指标验收。详见[完整实测结论](docs/RESULTS.zh.md)。
 
-## 正在验证rc.10
+## 每日日志和自动清理
 
-新增默认每日日志：控制台和文件同时输出，最多30天、总量1GB自动清理；目录、时区和阈值可配。[日志使用说明](docs/LOGGING.zh.md)明确当天单文件触顶会截断旧内容。另补已启用保护输入缺失时暂停回收。[候选变更](docs/RELEASE-v0.2.0-rc.10.zh.md)与实际发布状态请以Releases为准。
+`run`默认同时输出控制台和每日文件日志，例如`containercacheguard-2026-11-10.log`。每个实例最多保留30个日历日，受管文件合计上限1GB，先删最旧历史；只剩当天文件仍触顶时清掉当天旧内容，继续同一个文件。目录、时区和阈值可配；[日志手册](docs/LOGGING.zh.md)包含全部参数、四容器挂载和故障处理。此策略只管理CCG自己的文件，运行时另存的控制台日志由集群管理。
 
 ## 两种模式，按需要选择
 
@@ -83,6 +83,7 @@ kill -TERM <PID>   # 退出；不结束业务进程
 ## 完整文档
 
 - [命令与全部配置参数](docs/CONFIGURATION.zh.md)：每个参数的单位、默认值和调整影响。
+- [每日日志与自动清理](docs/LOGGING.zh.md)：一天一个文件、30天和1GB边界、四实例目录及权限。
 - [常见状态与排障](docs/TROUBLESHOOTING.zh.md)：为什么不释放、释放后不下降、跨容器监控错位，以及怎样确认暂停。
 - [容器、DBS、Kubernetes 与 OpenShift 部署](docs/DEPLOYMENT.zh.md)：同容器与 sidecar、共享 inode、UID、cgroup 和旧脚本协调。
 - [Web 与 DBS/HISDBS 四容器部署](docs/FOUR-CONTAINERS.zh.md)：独立备份容器、源端和输出端配置、连接与数据保留、访问页面、压力验收。
