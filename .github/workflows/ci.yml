@@ -34,8 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          test -z "$(git status --porcelain)"
+          if [[ -n "$(git status --porcelain)" ]]; then git status --short; exit 1; fi
           version="$(cat VERSION)"
+          printf 'Version: %q\n' "$version"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]
           go build -trimpath -ldflags "-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard-linux-${{ matrix.arch }} .
           file dist/containercacheguard-linux-${{ matrix.arch }} | tee binary-info.txt
