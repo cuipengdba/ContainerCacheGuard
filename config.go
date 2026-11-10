@@ -30,6 +30,10 @@ type Config struct {
 	MaxBusinessP99MS             float64  `json:"max_business_p99_ms"`
 	IntervalMS                   int      `json:"interval_ms"`
 	LogIntervalSeconds           int      `json:"log_interval_seconds"`
+	LogDirectory                 string   `json:"log_directory"`
+	LogKeepDays                  int      `json:"log_keep_days"`
+	LogMaxTotalBytes             int64    `json:"log_max_total_bytes"`
+	LogTimezone                  string   `json:"log_timezone"`
 	WarmupSeconds                int      `json:"warmup_seconds"`
 	RecoveryHealthySeconds       int      `json:"recovery_healthy_seconds"`
 	ProtectSeconds               int      `json:"protect_seconds"`
@@ -72,7 +76,8 @@ func defaultConfig() Config {
 		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
 		StateFile:    "/tmp/containercacheguard/status.json", SignalMaxAgeSeconds: 10,
 		WebHistorySamples: 3600,
-		IntervalMS:        1000, LogIntervalSeconds: 10, WarmupSeconds: 60, RecoveryHealthySeconds: 10, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
+		LogKeepDays:       30, LogMaxTotalBytes: 1000000000, LogTimezone: "Local",
+		IntervalMS: 1000, LogIntervalSeconds: 10, WarmupSeconds: 60, RecoveryHealthySeconds: 10, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
 		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, CriticalMode: "pause", MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
 		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
 		DiscoverEntriesPerSecond: 500, MaxFiles: 150000, MaxDirectories: 20000, MaxRegions: 8192, MaxOperationsPerSecond: 1000,
@@ -103,6 +108,9 @@ func loadConfig(path string) (Config, error) {
 	return c, nil
 }
 func (c Config) validate() error {
+	if e := c.validateLogging(); e != nil {
+		return e
+	}
 	if c.Mode != "auto" && c.Mode != "paths" {
 		return errors.New("mode 必须为 auto 或 paths")
 	}
@@ -135,6 +143,9 @@ func (c Config) validate() error {
 	}
 	if c.MaxBusinessP99MS < 0 {
 		return errors.New("max_business_p99_ms 不能为负")
+	}
+	if c.MaxBusinessP99MS > 0 && c.BusinessSignal == "" {
+		return errors.New("max_business_p99_ms 大于0时必须配置 business_signal")
 	}
 	if c.CacheTargetBytes < 0 || c.MaxDirtyBytes < 0 || c.MaxIOBytesPerSecond < 0 || c.MinNodeAvailableBytes < 0 {
 		return errors.New("字节阈值不能为负")
@@ -196,6 +207,9 @@ func forbiddenRoot(p string) bool {
 	return false
 }
 func (c Config) excluded(p string) bool {
+	if beneath(p, c.logDirectory()) {
+		return true
+	}
 	if forbiddenRoot(p) {
 		return true
 	}

@@ -5,6 +5,17 @@ import (
 	"time"
 )
 
+func withProtectionMetadata(m Metrics) Metrics {
+	m.Available = healthyProtectionMetrics().Available
+	m.Version = 2
+	if m.Time.IsZero() {
+		m.Time = time.Now()
+	}
+	zero := 0.0
+	m.IOPSI = &zero
+	return m
+}
+
 func TestPolicySafety(t *testing.T) {
 	c := defaultConfig()
 	c.Action = "enforce"
@@ -12,6 +23,7 @@ func TestPolicySafety(t *testing.T) {
 	c.CacheTargetBytes = 100 * MiB
 	now := time.Now()
 	m := Metrics{Current: 500 * MiB, Limit: 1024 * MiB, File: 300 * MiB, RSS: 20 * MiB}
+	m = withProtectionMetadata(m)
 	tests := []struct {
 		name   string
 		mutate func(*Config, *Metrics)
@@ -59,6 +71,7 @@ func TestMemoryBudgetSubtractsShmemAndUnlimited(t *testing.T) {
 	c.Action = "enforce"
 	now := time.Now()
 	m := Metrics{Limit: 8 << 30, File: 3 << 30, Shmem: 2 << 30}
+	m = withProtectionMetadata(m)
 	d := decide(c, m, now.Add(-time.Hour), now, false, 0)
 	if d.CacheTarget != 2<<30 || d.Allow {
 		t.Fatal(d)
@@ -73,6 +86,7 @@ func TestBoundedCriticalStillHonorsSafety(t *testing.T) {
 	c.CacheTargetBytes = 100 * MiB
 	now := time.Now()
 	m := Metrics{Current: 1024 * MiB, Limit: 1024 * MiB, File: 900 * MiB}
+	m = withProtectionMetadata(m)
 	d := decide(c, m, now, now, false, 0)
 	if !d.Allow || d.State != "CONTROL_CRITICAL" {
 		t.Fatal(d)
@@ -99,6 +113,7 @@ func TestSharedAncestorPressureUsesPairedUsage(t *testing.T) {
 		Current: 100 * MiB, Limit: 1024 * MiB, File: 300 * MiB,
 		AncestorCurrent: 900 * MiB, AncestorLimit: 1024 * MiB,
 	}
+	m = withProtectionMetadata(m)
 	d := decide(c, m, now.Add(-time.Hour), now, false, 0)
 	if d.State != "CONTROL" || !d.Allow {
 		t.Fatal("sibling usage did not trigger pressure policy", d)

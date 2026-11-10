@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Metrics struct {
 	Available             map[string]bool `json:"available_metrics,omitempty"`
@@ -55,6 +58,11 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 	}
 	if m.Error != "" {
 		return stop("SUSPENDED", "metrics_unavailable: "+m.Error)
+	}
+	if c.Action == "enforce" {
+		if p := assessProtection(c, m); !p.Ready {
+			return stop("SUSPENDED", "protection_metrics_unavailable:"+strings.Join(p.Missing, ","))
+		}
 	}
 	if m.RSS > c.MaxRSSBytes || m.CPUPercent > c.MaxCPUPercent {
 		return stop("BACKOFF", "self_resource_budget")

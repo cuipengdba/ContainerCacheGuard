@@ -170,6 +170,7 @@ func entry(args []string) error {
 		} else {
 			m := r.sample(c)
 			result["metrics"] = m
+			result["protection"] = assessProtection(c, m)
 			if m.Error != "" {
 				e = fmt.Errorf("metrics unavailable: %s", m.Error)
 			}
@@ -217,23 +218,25 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
-	Time              time.Time      `json:"time"`
-	Version           string         `json:"version"`
-	PID               int            `json:"pid"`
-	Mode              string         `json:"mode"`
-	Action            string         `json:"action"`
-	IntervalMS        int            `json:"sample_interval_ms"`
-	WebAddress        string         `json:"web_address,omitempty"`
-	Decision          Decision       `json:"decision"`
-	Metrics           Metrics        `json:"metrics"`
-	Counters          Counters       `json:"counters"`
-	Roots             []string       `json:"roots"`
-	WorkerBusy        bool           `json:"worker_busy"`
-	WorkerBusySeconds float64        `json:"worker_busy_seconds"`
-	Paused            bool           `json:"paused"`
-	Degraded          []string       `json:"degraded"`
-	Diagnostics       Diagnostics    `json:"diagnostics"`
-	Recovery          RecoveryStatus `json:"recovery"`
+	Time              time.Time         `json:"time"`
+	Version           string            `json:"version"`
+	PID               int               `json:"pid"`
+	Mode              string            `json:"mode"`
+	Action            string            `json:"action"`
+	IntervalMS        int               `json:"sample_interval_ms"`
+	WebAddress        string            `json:"web_address,omitempty"`
+	Decision          Decision          `json:"decision"`
+	Metrics           Metrics           `json:"metrics"`
+	Counters          Counters          `json:"counters"`
+	Roots             []string          `json:"roots"`
+	WorkerBusy        bool              `json:"worker_busy"`
+	WorkerBusySeconds float64           `json:"worker_busy_seconds"`
+	Paused            bool              `json:"paused"`
+	Degraded          []string          `json:"degraded"`
+	Diagnostics       Diagnostics       `json:"diagnostics"`
+	Recovery          RecoveryStatus    `json:"recovery"`
+	Protection        *ProtectionStatus `json:"protection,omitempty"`
+	Logging           LoggingStatus     `json:"logging"`
 }
 
 func business(c Config, m *Metrics) {
@@ -285,12 +288,33 @@ func business(c Config, m *Metrics) {
 	m.BusinessP99 = v.P99MS
 	m.BusinessPause = v.Pause
 }
-func runDaemon(c Config, roots []string, duration time.Duration) error {
+func runDaemon(c Config, roots []string, duration time.Duration) (runErr error) {
 	lock, e := lockState(c.StateFile)
 	if e != nil {
 		return e
 	}
 	defer lock.Close()
+	var allow atomic.Bool
+	logs, e := newDailyLogger(c, os.Stdout, time.Now)
+	if e != nil {
+		return fmt.Errorf("daily logs unavailable; no advice started: %w", e)
+	}
+	defer func() {
+		allow.Store(false)
+		event := map[string]any{"time": time.Now(), "event": "daemon_stopped"}
+		if runErr != nil {
+			event["error"] = runErr.Error()
+		}
+		if err := logs.WriteJSON(event); runErr == nil && err != nil {
+			runErr = err
+		}
+		if err := logs.Close(); runErr == nil && err != nil {
+			runErr = err
+		}
+	}()
+	if e = logs.WriteJSON(map[string]any{"time": time.Now(), "event": "daemon_started", "version": version, "pid": os.Getpid()}); e != nil {
+		return e
+	}
 	r, e := newMetricReader(c.CgroupPath)
 	if e != nil {
 		return e
@@ -314,7 +338,6 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR1, syscall.SIGUSR2)
 	defer signal.Stop(sigs)
-	var allow atomic.Bool
 	work := make(chan struct{}, 1)
 	results := make(chan Counters, 1)
 	eng := newEngine(c, roots)
@@ -341,6 +364,7 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 	}
 	m := r.sample(c)
 	oomBaseline := m.OOMKill
+	oomBaselineReady := m.Available["oom_kill_total"]
 	lastLog := time.Time{}
 	busySince := time.Time{}
 	var recovery recoveryGate
@@ -355,7 +379,7 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 			s.Time = time.Now()
 			s.Decision = Decision{State: "STOPPED", Reason: "shutdown"}
 			atomicJSON(c.StateFile, s)
-			return nil
+			return logs.WriteJSON(s)
 		case sig := <-sigs:
 			if sig == syscall.SIGUSR1 {
 				s.Paused = true
@@ -373,10 +397,23 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 			busySince = time.Time{}
 		case now := <-tick.C:
 			if !now.Before(nextSample) {
+				// File/state logging can wait for storage. Do not leave an old
+				// permission armed while the sampler is waiting for IO.
+				allow.Store(false)
+				if e = logs.Maintain(); e != nil {
+					allow.Store(false)
+					return fmt.Errorf("daily log maintenance failed; stopping advice: %w", e)
+				}
 				m = r.sample(c)
 				business(c, &m)
+				if !oomBaselineReady && m.Available["oom_kill_total"] {
+					oomBaseline, oomBaselineReady = m.OOMKill, true
+				}
 				s.Metrics = m
 				s.Time = now
+				protection := assessProtection(c, m)
+				s.Protection = &protection
+				s.Logging = logs.Status()
 				s.Decision = decide(c, m, started, now, s.Paused, oomBaseline)
 				s.Degraded = []string{}
 				if m.IOPSI == nil {
@@ -405,7 +442,6 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 					s.Decision.Reason = "worker_slow_or_blocked"
 				}
 				s.Decision, s.Recovery = recovery.apply(c, s.Decision, now)
-				allow.Store(s.Decision.Allow)
 				s.Diagnostics = diagnose(c, m, s.Decision)
 				if e = atomicJSON(c.StateFile, s); e != nil {
 					allow.Store(false)
@@ -415,14 +451,20 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 					web.publish(s)
 				}
 				if now.Sub(lastLog) >= time.Duration(c.LogIntervalSeconds)*time.Second {
-					b, _ := json.Marshal(s)
-					fmt.Println(string(b))
+					if e = logs.WriteJSON(s); e != nil {
+						allow.Store(false)
+						return fmt.Errorf("daily log write failed; stopping advice: %w", e)
+					}
 					lastLog = now
 				}
+				age := time.Since(m.Time)
+				allow.Store(s.Decision.Allow && age >= 0 && age <= time.Duration(c.IntervalMS)*3*time.Millisecond)
 				nextSample = now.Add(time.Duration(c.IntervalMS) * time.Millisecond)
 			}
 			// A single worker. Even if a syscall blocks, never spawn replacements.
-			if !now.Before(nextWork) && !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" && s.Decision.State != "CRITICAL" && s.Metrics.Error == "" {
+			if !now.Before(nextWork) && !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" && s.Decision.State != "CRITICAL" && s.Metrics.Error == "" &&
+				s.Metrics.Available["self_rss_bytes"] && s.Metrics.Available["self_cpu_percent"] &&
+				(c.Action == "observe" || (s.Protection != nil && s.Protection.Ready)) {
 				s.WorkerBusy = true
 				busySince = now
 				spacing := 200 * time.Millisecond

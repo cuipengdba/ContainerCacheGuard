@@ -159,6 +159,24 @@ func prometheusSnapshot(s Status, present bool, now time.Time) string {
 		metric("ccg_pressured_ancestor_memory_limit_bytes", "Finite limit paired with the pressured ancestor use.", "gauge", float64(m.AncestorLimit))
 	}
 	metric("ccg_advice_allowed", "Latest valid policy allows advice; does not prove effective reclaim.", "gauge", boolNumber(s.Decision.Allow))
+	if s.Protection != nil {
+		metric("ccg_protection_ready", "Enabled guards have valid inputs; not permission to reclaim or business health.", "gauge", boolNumber(s.Protection.Ready))
+		out.WriteString("# HELP ccg_protection_metric_missing Required protection input is missing or invalid.\n# TYPE ccg_protection_metric_missing gauge\n")
+		for _, key := range []string{"metrics_sample", "cgroup_version", "current_bytes", "file_bytes", "shmem_bytes", "dirty_bytes", "writeback_bytes", "self_rss_bytes", "self_cpu_percent", "oom_kill_total", "io_bytes_per_second", "io_psi_avg10", "file_refaults_per_second", "host_memavailable_bytes", "business_p99_ms"} {
+			missing := false
+			for _, field := range s.Protection.Missing {
+				if field == key {
+					missing = true
+				}
+			}
+			fmt.Fprintf(&out, "ccg_protection_metric_missing{metric=%q} %g\n", key, boolNumber(missing))
+		}
+	}
+	if s.Logging.Enabled {
+		metric("ccg_log_managed_bytes", "Bytes of CCG-managed daily files; excludes runtime-collected stdout logs.", "gauge", float64(s.Logging.ManagedBytes))
+		metric("ccg_log_files_deleted_total", "Historical daily files deleted by this daemon instance.", "counter", float64(s.Logging.DeletedFiles))
+		metric("ccg_log_current_file_truncations_total", "In-place truncations when the active daily file reaches the total budget.", "counter", float64(s.Logging.Truncations))
+	}
 	out.WriteString("# HELP ccg_policy_state Latest sampled policy state.\n# TYPE ccg_policy_state gauge\n")
 	states := []string{"OBSERVE", "IDLE", "CONTROL", "CONTROL_CRITICAL", "BACKOFF", "CRITICAL", "SUSPENDED", "STOPPED", "UNKNOWN"}
 	state := "UNKNOWN"

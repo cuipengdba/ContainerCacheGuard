@@ -98,3 +98,8 @@ and (rate(ccg_observed_net_reduction_bytes_total[5m]) == 0)
 本轮接口功能回归不能代替PG14真实数据、业务SLO、48小时或零驱逐验收。
 
 机制参考：[Prometheus文本格式](https://prometheus.io/docs/instrumenting/exposition_formats/)、[Kubernetes探针](https://kubernetes.io/docs/concepts/workloads/pods/probes/)。
+
+
+## rc.10补充：保护齐全和日志
+
+`ccg_protection_ready`表示已启用保护的必要输入有效，`ccg_protection_metric_missing{metric="固定字段"}`列出缺项；不表示策略允许动作。monitoring_ready可以为1而protection_ready为0：内存快照仍可看，但缺少某个启用的保护输入，停止新回收。日志总量和删除/截断计数见[日志说明](LOGGING.zh.md)。均只导出已有状态，不增添路径或错误标签。

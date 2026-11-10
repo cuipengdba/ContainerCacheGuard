@@ -51,6 +51,13 @@ def main():
         finally:
             p.terminate();p.wait(10);log.close()
         assert hashlib.sha256(file.read_bytes()).hexdigest()==digest;checks.append('content_unchanged')
+        daily=pathlib.Path(s['logging']['directory'])
+        daily_files=list(daily.glob('containercacheguard-????-??-??.log'))
+        assert len(daily_files)==1 and s['logging']['keep_days']==30 and s['logging']['max_total_bytes']==1000000000
+        events=[json.loads(line) for line in daily_files[0].read_text().splitlines()]
+        assert any(e.get('event')=='daemon_started' for e in events) and any(e.get('event')=='daemon_stopped' for e in events)
+        assert any(e.get('metrics',{}).get('current_bytes',0)>0 for e in events)
+        checks.append('daily_file_console_and_lifecycle_logs')
         started=time.monotonic();timed=subprocess.run([binary,'scan','--path',str(file),'--scan-bytes-per-second',str(4<<20),'--duration','100ms'],capture_output=True,text=True,timeout=3);assert timed.returncode!=0 and time.monotonic()-started<2;assert json.loads(timed.stdout)['Complete'] is False;checks.append('scan_deadline_inside_large_file')
         # A real signal flap must not restart advice on its first good sample.
         cfg.update(mode='paths',action='enforce',recovery_healthy_seconds=2,
@@ -84,10 +91,49 @@ def main():
         assert hashlib.sha256(file.read_bytes()).hexdigest()==digest
         checks.append('recovery_keeps_content_unchanged')
         cfg.update(business_signal='')
+        # A fake cgroup is only a private fixture. No actual cgroup is modified.
+        fake=w/'fake-cgroup';fake.mkdir()
+        for name,content in {'memory.current':'134217728','memory.max':'max',
+                'memory.stat':'file 134217728\nshmem 0\nfile_dirty 0\nfile_writeback 0\nanon 0\n',
+                'memory.events':'oom_kill 0','io.stat':''}.items():
+            (fake/name).write_text(content)
+        file.read_bytes()  # Rewarm only the private test file after earlier advice.
+        cfg.update(cgroup_path=str(fake),max_io_psi_avg10=10,state_file=str(w/'guards/status.json'))
+        config.write_text(json.dumps(cfg))
+        with (w/'guards.log').open('w') as log:
+            p=subprocess.Popen([binary,'run','--config',str(config)],stdout=log,stderr=subprocess.STDOUT)
+            try:
+                state=w/'guards/status.json'
+                s=wait_state(state,lambda s:'io_psi_avg10' in s.get('protection',{}).get('missing_metrics',[]))
+                assert not s['decision']['allow'] and s['counters']['advice_bytes']==0
+                base='http://'+s['web_address']
+                with urllib.request.urlopen(base+'/readyz',timeout=3) as response:assert response.status==200
+                with urllib.request.urlopen(base+'/metrics',timeout=3) as response:exposition=response.read().decode()
+                assert 'ccg_protection_ready 0\n' in exposition
+                assert 'ccg_protection_metric_missing{metric="io_psi_avg10"} 1\n' in exposition
+                checks.append('missing_enabled_psi_stops_advice_but_monitoring_ready')
+                (fake/'io.pressure').write_text('some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n')
+                wait_state(state,lambda s:s['decision']['reason']=='waiting_healthy_recovery')
+                time.sleep(.5)
+                assert json.loads(state.read_text())['counters']['advice_bytes']==0
+                wait_state(state,lambda s:s['protection']['ready'] and s['counters']['advice_bytes']>0)
+                checks.append('guard_restoration_requires_continuous_recovery')
+            finally:p.terminate();p.wait(10)
+        cfg.update(cgroup_path='',max_io_psi_avg10=0)
         # Auto scope is tested separately, in observe mode; it never evicts
         # arbitrary runner data while discovering mounted data directories.
         cfg.update(mode='auto',paths=[],auto_roots=[str(data)],action='observe',state_file=str(w/'auto/status.json'))
         config.write_text(json.dumps(cfg));run([binary,'run','--config',config,'--duration','2s']);s=json.loads((w/'auto/status.json').read_text());assert str(data) in s['roots'] and s['counters']['advice_bytes']==0;checks.append('auto_discovers_and_observe_never_advises')
+        # A matching FIFO must fail before any daemon work starts, never block.
+        unsafe=w/'unsafe-logs';unsafe.mkdir(mode=0o700)
+        day=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
+        os.mkfifo(unsafe/('containercacheguard-'+day+'.log'),0o600)
+        cfg.update(action='enforce',log_directory=str(unsafe),log_timezone='UTC',state_file=str(w/'logfail/status.json'))
+        config.write_text(json.dumps(cfg))
+        failed=subprocess.run([binary,'run','--config',str(config),'--duration','2s'],capture_output=True,text=True,timeout=5)
+        assert failed.returncode!=0 and 'daily logs unavailable' in failed.stderr
+        assert not (w/'logfail/status.json').exists()
+        checks.append('unsafe_log_destination_fails_before_worker_start')
         report=dict(success=True,checks=checks,kernel=os.uname().release,arch=os.uname().machine,page_size=os.sysconf('SC_PAGE_SIZE'),initial_resident=initial['Resident'],kubernetes_eviction_test=False)
         if args.output:pathlib.Path(args.output).write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(report,indent=2))

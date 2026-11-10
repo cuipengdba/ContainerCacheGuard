@@ -235,6 +235,8 @@ function render(s,serverTime){const m=s.metrics||{},time=Date.parse(s.time),mt=D
   '自身 RSS：'+decimal(m.self_rss_bytes/1048576,'self_rss_bytes')+' MiB · CPU：'+decimal(m.self_cpu_percent,'self_cpu_percent')+'%',
   '文件页 refault：'+(m.file_refault_rate_valid===true?decimal(m.file_refaults_per_second):'未知')+' 次/秒（不能单独归因于 CCG）',
   '健康恢复：'+(s.recovery?.pending?'等待连续有效采样 '+(s.recovery.healthy_seconds||0).toFixed(1)+' / '+s.recovery.required_seconds+' 秒':'无需等待或已完成')+' · 恢复次数：'+(s.recovery?.recovery_resumes_total||0),
+	'保护数据：'+(!fresh?'未知':s.protection?(s.protection.ready?'已启用保护所需数据齐全':'缺少 '+(s.protection.missing_metrics||[]).join(', ')):'旧版本未报告'),
+	'每日日志：'+(s.logging?.enabled?s.logging.current_file+' · 受管总量 '+gib(s.logging.managed_bytes)+' / '+gib(s.logging.max_total_bytes)+' · 最多 '+s.logging.keep_days+' 天':'未启用或旧版本未报告'),
   '目录遍历：'+(s.counters.completed_inventory_sweeps||0)+'轮 · 文件索引轮换：'+(s.counters.index_rotations||0)+'次',
   '监控范围：'+(s.roots||[]).join(', '),
   '能力降级：'+(s.degraded||[]).join(', ')

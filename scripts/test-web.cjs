@@ -36,6 +36,12 @@ assert.match(elements.get('detail').textContent, /refault：0\.0/);
 context.sample.recovery = {pending: true, healthy_seconds: 1.5, required_seconds: 10};
 vm.runInContext('render(sample, now)', context);
 assert.match(elements.get('detail').textContent, /等待连续有效采样 1\.5 \/ 10 秒/);
+context.sample.protection = {ready: false, missing_metrics: ['io_psi_avg10']};
+context.sample.logging = {enabled: true, current_file: 'containercacheguard-2026-11-10.log', managed_bytes: 500, max_total_bytes: 1000000000, keep_days: 30};
+vm.runInContext('render(sample, now)', context);
+assert.match(elements.get('detail').textContent, /保护数据：缺少 io_psi_avg10/);
+assert.match(elements.get('detail').textContent, /containercacheguard-2026-11-10.log/);
+assert.match(elements.get('detail').textContent, /最多 30 天/);
 context.sample.metrics.error = 'cgroup read failed';
 vm.runInContext('render(sample, now)', context);
 assert.equal((elements.get('cards').innerHTML.match(/未知/g) || []).length, 10);
@@ -82,4 +88,4 @@ context.historyData = [0, 1, 2].map(seconds => ({
 vm.runInContext('graph(historyData)', context);
 assert.equal(lines.filter(p => p[0] === '#7bb8ff').length, 0);
 assert.equal(lines.filter(p => p[0] === '#eb91be').length, 2);
-console.log(JSON.stringify({success: true, checks: ['unknown_refault', 'known_zero_refault', 'missing_metrics_cards', 'pending_hint_explanation', 'healthy_recovery_explanation', 'invalid_history_gap', 'elapsed_time_axis', 'missing_memory_field', 'stale_metric_timestamp', 'future_metric_timestamp', 'per_field_history_gap', 'unavailable_detail_values']}));
+console.log(JSON.stringify({success: true, checks: ['unknown_refault', 'known_zero_refault', 'missing_metrics_cards', 'pending_hint_explanation', 'healthy_recovery_explanation', 'invalid_history_gap', 'elapsed_time_axis', 'missing_memory_field', 'stale_metric_timestamp', 'future_metric_timestamp', 'per_field_history_gap', 'unavailable_detail_values', 'protection_missing_explanation', 'daily_log_explanation']}));

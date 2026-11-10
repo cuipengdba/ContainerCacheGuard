@@ -66,6 +66,8 @@ func TestPrometheusFormatAndLabelsStayBounded(t *testing.T) {
 	s.Version = "private-marker\nINJECTED 1"
 	s.Metrics.Cgroup, s.Counters.LastError, s.Decision.Reason = "private-marker", "private-marker", "private-marker"
 	s.Decision.State = "private-marker"
+	s.Protection = &ProtectionStatus{Missing: []string{"io_psi_avg10", "private-marker"}}
+	s.Logging = LoggingStatus{Enabled: true, Directory: "private-marker", CurrentFile: "private-marker"}
 	body := prometheusSnapshot(s, true, now)
 	if strings.Contains(body, "private-marker") || strings.Contains(body, "INJECTED") || !strings.Contains(body, "ccg_build_info{version=\"custom\"} 1") {
 		t.Fatal("unbounded/private labels escaped into exposition")
@@ -110,9 +112,33 @@ func BenchmarkPrometheusSnapshot(b *testing.B) {
 	for _, key := range []string{"anon_bytes", "slab_bytes", "active_file_bytes", "inactive_file_bytes", "dirty_bytes", "writeback_bytes", "oom_kill_total", "file_refaults", "file_refaults_per_second", "host_memavailable_bytes", "self_rss_bytes", "self_cpu_seconds", "self_cpu_percent", "io_bytes", "io_bytes_per_second"} {
 		s.Metrics.Available[key] = true
 	}
+	p := assessProtection(defaultConfig(), s.Metrics)
+	s.Protection = &p
+	s.Logging = LoggingStatus{Enabled: true, ManagedBytes: 4096}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		benchmarkExposition = prometheusSnapshot(s, true, now)
+	}
+}
+
+func TestMonitoringProtectionAndLoggingStaySeparate(t *testing.T) {
+	now := time.Now()
+	s := metricsFixture(now)
+	p := assessProtection(defaultConfig(), s.Metrics)
+	s.Protection = &p
+	s.Logging = LoggingStatus{Enabled: true, Directory: "private-marker", ManagedBytes: 999}
+	body := prometheusSnapshot(s, true, now)
+	for _, expected := range []string{"ccg_monitoring_ready 1\n", "ccg_protection_ready 0\n", "ccg_advice_allowed 0\n", "ccg_log_managed_bytes 999\n"} {
+		if !strings.Contains(body, expected) {
+			t.Fatal("states were conflated", expected)
+		}
+	}
+	if strings.Contains(body, "private-marker") {
+		t.Fatal("log path leaked into metrics")
+	}
+	s.Time = now.Add(-10 * time.Second)
+	if strings.Contains(prometheusSnapshot(s, true, now), "\nccg_log_managed_bytes ") {
+		t.Fatal("stale log count exported as current")
 	}
 }

@@ -51,9 +51,9 @@
 | `memory_critical_ratio` | `0.95` | 达到可见限额95%时进入临界区，按 critical_mode 决定停止或有限继续；不是 OOM 保护保证 |
 | `critical_mode` | `pause` | 默认临界时停止推测性回收。`bounded` 显式允许在临界区继续原有预算内的回收，适合经验证的低复用备份输出范围；仍遵守脏页、IO、业务延迟、自身开销和新增 OOM kill 保护，不自动提速、不写 cgroup 限额。一般业务目录先保留 pause |
 | `max_dirty_bytes` | `134217728`（128MiB） | dirty+writeback 超过此值暂停回收。0 表示只允许该统计为0；不代表每个目标页严格干净 |
-| `max_io_bytes_per_second` | `0` | 目标 cgroup 累计 io.stat 推算的读写流量保护阈值，0禁用；配置非零而接口缺失时停止动作 |
+| `max_io_bytes_per_second` | `0` | 目标 cgroup 累计 io.stat 推算的读写流量保护阈值，0禁用；配置非零而接口/连续速率基线缺失时停止动作 |
 | `max_file_refaults_per_second` | `0` | cgroup v2 中每秒 `workingset_refault_file` 增量的退让阈值，0禁用；配置非零但指标不可用时停止动作。它反映此前被逐出文件页的再次访问，**不能单独证明由本工具造成**。先测基线和业务峰值，再设阈值；它是滞后保护，不保证业务不受影响 |
-| `max_io_psi_avg10` | `10` | IO PSI some avg10 百分比超过10退让，0禁用；PSI 缺失显示 unknown，不伪装成0，但不会单独阻止全部运行 |
+| `max_io_psi_avg10` | `10` | IO PSI some avg10 百分比超过10退让，0禁用；从rc.10起，启用时PSI缺失/无效会暂停新回收；0才表示明确禁用，不自动降级 |
 | `min_node_available_bytes` | `0` | 可选宿主 `/proc/meminfo` MemAvailable 下限，0禁用。它不是 kubelet memory.available；未知或低于阈值时停止动作 |
 | `business_signal` | 空 | 可选业务信号 JSON 文件；配置后缺失/过期会停止动作。文件由监控系统写入，CCG 不执行外部命令 |
 | `signal_max_age_seconds` | `10` | 业务信号允许的最大年龄；未来超过1秒的时间也拒绝 |
@@ -137,3 +137,13 @@ Web 页面和 `/api/v1/status`、`/api/v1/history` 均为只读，不提供开�
 ## rc.9只读监控接口
 
 复用web_listen/web_token_file；无新增必填配置。`/healthz`表示CCG HTTP响应，`/readyz`表示数据新鲜有效，`/metrics`是Prometheus文本格式。数据新鲜窗口为max(3倍采样周期,1秒)，未来超过1秒的状态/指标时间拒绝；指标有误或过期时资源值和工作计数省略，不补零。`available_metrics`描述字段可采集性，需同时确认整个样本无error。状态新增`web_address`记录实际监听地址，尤其适用于端口0；不会自动设置节点转发。详细指标、认证、四实例抓取及业务Pod探针边界见[监控说明](MONITORING.zh.md)。
+
+## rc.10：日志与保护输入完整性
+
+[每日日志完整说明](LOGGING.zh.md)介绍新增的`log_directory`、`log_keep_days`、`log_max_total_bytes`、`log_timezone`。默认每天一文件、最多30个日历日、受管总量1GB；当日单文件触顶会截断旧内容并记录清理事件。控制台输出继续保留。
+
+`enforce`要求当前/文件/共享/脏页/写回、CCG自身RSS/CPU等必要输入有效；v2还要求OOM计数可用。启用的IO速率、PSI、refault、宿主余量、业务延迟保护也不能把未知当成零。缺失时`protection.ready=false`并列出固定缺项，停止新建议；`observe`仍可观察已知数据。v1未支持的OOM计数会单独标注。无限内存限额仍沿用显式缓存目标规则，不把无限限额误记为采集失败。
+
+IO、CPU和refault差分遇到采样间隔超过3倍配置周期、计数回退或范围变化，重新建立基线。恢复回收仍经过既有连续健康窗口。配置`max_business_p99_ms>0`必须同时设置`business_signal`。
+
+监控就绪、保护输入齐全、策略允许回收仍是三件事；`/readyz`不因可选保护缺项就让数据库Pod摘流量。默认PSI保护已启用，旧环境若不提供该接口，升级后可能只观察不回收；只有明确接受缺少这项保护时才把`max_io_psi_avg10`设为0。

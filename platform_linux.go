@@ -209,7 +209,7 @@ func values(path string) map[string]int64 {
 		v := strings.Fields(l)
 		if len(v) >= 2 {
 			n, e := strconv.ParseInt(v[1], 10, 64)
-			if e == nil {
+			if e == nil && n >= 0 {
 				out[strings.TrimSuffix(v[0], ":")] = n
 			}
 		}
@@ -242,7 +242,7 @@ func psi(path string) *float64 {
 			for _, s := range f[1:] {
 				if strings.HasPrefix(s, "avg10=") {
 					v, e := strconv.ParseFloat(strings.TrimPrefix(s, "avg10="), 64)
-					if e == nil {
+					if e == nil && finiteNonnegative(v) && v <= 100 {
 						return &v
 					}
 				}
@@ -430,9 +430,6 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Writeback = s["file_writeback"]
 		m.ActiveFile = s["active_file"]
 		m.InactiveFile = s["inactive_file"]
-		if _, ok := s["workingset_refault_file"]; !ok && c.MaxFileRefaultsPerSecond > 0 {
-			m.Error = "configured file-refault guard unavailable (memory.stat)"
-		}
 		m.FileRefaults = s["workingset_refault_file"]
 		_, m.FileRefaultsAvailable = s["workingset_refault_file"]
 		events := values(filepath.Join(r.path, "memory.events"))
@@ -457,9 +454,6 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.ActiveFile = get("active_file")
 		m.InactiveFile = get("inactive_file")
 		m.Available = memoryAvailability(1, s)
-		if c.MaxFileRefaultsPerSecond > 0 {
-			m.Error = "configured file-refault guard requires cgroup v2"
-		}
 	}
 	if e != nil {
 		m.Error = e.Error()
@@ -491,16 +485,7 @@ func (r *metricReader) sample(c Config) Metrics {
 	b, ioErr := os.ReadFile(filepath.Join(r.path, "io.stat"))
 	m.Available["io_bytes"] = ioErr == nil
 	if ioErr == nil {
-		for _, l := range strings.Split(string(b), "\n") {
-			for _, v := range strings.Fields(l) {
-				if strings.HasPrefix(v, "rbytes=") || strings.HasPrefix(v, "wbytes=") {
-					n, _ := strconv.ParseInt(strings.SplitN(v, "=", 2)[1], 10, 64)
-					m.IOBytes += n
-				}
-			}
-		}
-	} else if c.MaxIOBytesPerSecond > 0 {
-		m.Error = "configured IO guard unavailable (io.stat)"
+		m.IOBytes, m.Available["io_bytes"] = parseIOBytes(string(b))
 	}
 	m.IOPSI = psi(filepath.Join(r.path, "io.pressure"))
 	m.MemoryPSI = psi(filepath.Join(r.path, "memory.pressure"))
@@ -515,16 +500,7 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Available["self_cpu_seconds"] = true
 		m.CPUSeconds = float64(ru.Utime.Sec+ru.Stime.Sec) + float64(ru.Utime.Usec+ru.Stime.Usec)/1e6
 	}
-	dt := m.Time.Sub(r.previous.Time).Seconds()
-	if !r.previous.Time.IsZero() && dt > 0 {
-		m.IOBytesPerSecond = float64(max64(0, m.IOBytes-r.previous.IOBytes)) / dt
-		m.CPUPercent = (m.CPUSeconds - r.previous.CPUSeconds) / dt * 100
-		if r.previous.Error == "" && r.previous.Cgroup == m.Cgroup {
-			m.Available["io_bytes_per_second"] = m.Available["io_bytes"] && r.previous.Available["io_bytes"] && m.IOBytes >= r.previous.IOBytes
-			m.Available["self_cpu_percent"] = m.Available["self_cpu_seconds"] && r.previous.Available["self_cpu_seconds"] && m.CPUSeconds >= r.previous.CPUSeconds
-		}
-	}
-	setRefaultRate(&m, r.previous)
+	setSampleRates(c, &m, r.previous)
 	m.Available["limit_bytes"] = m.Limit > 0
 	m.Available["file_refaults"] = m.FileRefaultsAvailable
 	m.Available["file_refaults_per_second"] = m.FileRefaultRateValid
@@ -534,19 +510,6 @@ func (r *metricReader) sample(c Config) Metrics {
 	return m
 }
 
-func setRefaultRate(m *Metrics, previous Metrics) {
-	m.FileRefaultsPerSecond = 0
-	m.FileRefaultRateValid = false
-	dt := m.Time.Sub(previous.Time).Seconds()
-	if !m.FileRefaultsAvailable || !previous.FileRefaultsAvailable ||
-		m.Version != 2 || previous.Version != 2 || m.Cgroup != previous.Cgroup ||
-		previous.Time.IsZero() || dt <= 0 || previous.Error != "" || m.Error != "" ||
-		m.FileRefaults < previous.FileRefaults {
-		return
-	}
-	m.FileRefaultsPerSecond = float64(m.FileRefaults-previous.FileRefaults) / dt
-	m.FileRefaultRateValid = true
-}
 func lockState(path string) (*os.File, error) {
 	dir := filepath.Dir(path)
 	if e := os.MkdirAll(dir, 0700); e != nil {
