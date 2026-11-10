@@ -14,60 +14,62 @@ const MiB int64 = 1 << 20
 
 // Config has no executable hooks and never changes cgroup limits.
 type Config struct {
-	Mode                         string   `json:"mode"`
-	Action                       string   `json:"action"`
-	Paths                        []string `json:"paths"`
-	AutoRoots                    []string `json:"auto_roots"`
-	ExcludePaths                 []string `json:"exclude_paths"`
-	ExcludeNames                 []string `json:"exclude_names"`
-	CgroupPath                   string   `json:"cgroup_path"`
-	StateFile                    string   `json:"state_file"`
-	WebListen                    string   `json:"web_listen"`
-	WebTokenFile                 string   `json:"web_token_file"`
-	WebHistorySamples            int      `json:"web_history_samples"`
-	BusinessSignal               string   `json:"business_signal"`
-	SignalMaxAgeSeconds          int      `json:"signal_max_age_seconds"`
-	MaxBusinessP99MS             float64  `json:"max_business_p99_ms"`
-	IntervalMS                   int      `json:"interval_ms"`
-	LogIntervalSeconds           int      `json:"log_interval_seconds"`
-	LogDirectory                 string   `json:"log_directory"`
-	LogKeepDays                  int      `json:"log_keep_days"`
-	LogMaxTotalBytes             int64    `json:"log_max_total_bytes"`
-	LogTimezone                  string   `json:"log_timezone"`
-	WarmupSeconds                int      `json:"warmup_seconds"`
-	RecoveryHealthySeconds       int      `json:"recovery_healthy_seconds"`
-	ProtectSeconds               int      `json:"protect_seconds"`
-	MinFileAgeSeconds            int      `json:"min_file_age_seconds"`
-	CooldownSeconds              int      `json:"cooldown_seconds"`
-	RescanSeconds                int      `json:"rescan_seconds"`
-	CacheTargetBytes             int64    `json:"cache_target_bytes"`
-	CacheTargetRatio             float64  `json:"cache_target_ratio"`
-	Trigger                      string   `json:"trigger"`
-	MemoryHighRatio              float64  `json:"memory_high_ratio"`
-	MemoryCriticalRatio          float64  `json:"memory_critical_ratio"`
-	CriticalMode                 string   `json:"critical_mode"`
-	MaxDirtyBytes                int64    `json:"max_dirty_bytes"`
-	MaxIOBytesPerSecond          int64    `json:"max_io_bytes_per_second"`
-	MaxFileRefaultsPerSecond     float64  `json:"max_file_refaults_per_second"`
-	MaxIOPSIAvg10                float64  `json:"max_io_psi_avg10"`
-	MinNodeAvailableBytes        int64    `json:"min_node_available_bytes"`
-	ScanBytesPerSecond           int64    `json:"scan_bytes_per_second"`
-	ReclaimBytesPerSecond        int64    `json:"reclaim_bytes_per_second"`
-	InitialReclaimBytesPerSecond int64    `json:"initial_reclaim_bytes_per_second"`
-	RegionBytes                  int64    `json:"region_bytes"`
-	DiscoverEntriesPerSecond     int      `json:"discover_entries_per_second"`
-	MaxFiles                     int      `json:"max_files"`
-	MaxDirectories               int      `json:"max_directories"`
-	MaxRegions                   int      `json:"max_regions"`
-	MaxOperationsPerSecond       int      `json:"max_operations_per_second"`
-	MaxCPUPercent                float64  `json:"max_cpu_percent"`
-	MaxRSSBytes                  int64    `json:"max_rss_bytes"`
-	MaxReappearanceRatio         float64  `json:"max_reappearance_ratio"`
-	RecheckSeconds               int      `json:"recheck_seconds"`
-	WorkerBudgetMS               int      `json:"worker_budget_ms"`
-	AccessHints                  bool     `json:"access_hints"`
-	MaxWatches                   int      `json:"max_watches"`
-	MaxHintFiles                 int      `json:"max_hint_files"`
+	Mode         string   `json:"mode"`
+	Action       string   `json:"action"`
+	Paths        []string `json:"paths"`
+	AutoRoots    []string `json:"auto_roots"`
+	ExcludePaths []string `json:"exclude_paths"`
+	ExcludeNames []string `json:"exclude_names"`
+	CgroupPath   string   `json:"cgroup_path"`
+	StateFile    string   `json:"state_file"`
+	// Legacy fields are accepted only to upgrade old configuration files.
+	// They never trigger networking, token reads or history allocation.
+	WebListen                    string  `json:"web_listen,omitempty"`
+	WebTokenFile                 string  `json:"web_token_file,omitempty"`
+	WebHistorySamples            int     `json:"web_history_samples,omitempty"`
+	BusinessSignal               string  `json:"business_signal"`
+	SignalMaxAgeSeconds          int     `json:"signal_max_age_seconds"`
+	MaxBusinessP99MS             float64 `json:"max_business_p99_ms"`
+	IntervalMS                   int     `json:"interval_ms"`
+	LogIntervalSeconds           int     `json:"log_interval_seconds"`
+	LogDirectory                 string  `json:"log_directory"`
+	LogKeepDays                  int     `json:"log_keep_days"`
+	LogMaxTotalBytes             int64   `json:"log_max_total_bytes"`
+	LogTimezone                  string  `json:"log_timezone"`
+	WarmupSeconds                int     `json:"warmup_seconds"`
+	RecoveryHealthySeconds       int     `json:"recovery_healthy_seconds"`
+	ProtectSeconds               int     `json:"protect_seconds"`
+	MinFileAgeSeconds            int     `json:"min_file_age_seconds"`
+	CooldownSeconds              int     `json:"cooldown_seconds"`
+	RescanSeconds                int     `json:"rescan_seconds"`
+	CacheTargetBytes             int64   `json:"cache_target_bytes"`
+	CacheTargetRatio             float64 `json:"cache_target_ratio"`
+	Trigger                      string  `json:"trigger"`
+	MemoryHighRatio              float64 `json:"memory_high_ratio"`
+	MemoryCriticalRatio          float64 `json:"memory_critical_ratio"`
+	CriticalMode                 string  `json:"critical_mode"`
+	MaxDirtyBytes                int64   `json:"max_dirty_bytes"`
+	MaxIOBytesPerSecond          int64   `json:"max_io_bytes_per_second"`
+	MaxFileRefaultsPerSecond     float64 `json:"max_file_refaults_per_second"`
+	MaxIOPSIAvg10                float64 `json:"max_io_psi_avg10"`
+	MinNodeAvailableBytes        int64   `json:"min_node_available_bytes"`
+	ScanBytesPerSecond           int64   `json:"scan_bytes_per_second"`
+	ReclaimBytesPerSecond        int64   `json:"reclaim_bytes_per_second"`
+	InitialReclaimBytesPerSecond int64   `json:"initial_reclaim_bytes_per_second"`
+	RegionBytes                  int64   `json:"region_bytes"`
+	DiscoverEntriesPerSecond     int     `json:"discover_entries_per_second"`
+	MaxFiles                     int     `json:"max_files"`
+	MaxDirectories               int     `json:"max_directories"`
+	MaxRegions                   int     `json:"max_regions"`
+	MaxOperationsPerSecond       int     `json:"max_operations_per_second"`
+	MaxCPUPercent                float64 `json:"max_cpu_percent"`
+	MaxRSSBytes                  int64   `json:"max_rss_bytes"`
+	MaxReappearanceRatio         float64 `json:"max_reappearance_ratio"`
+	RecheckSeconds               int     `json:"recheck_seconds"`
+	WorkerBudgetMS               int     `json:"worker_budget_ms"`
+	AccessHints                  bool    `json:"access_hints"`
+	MaxWatches                   int     `json:"max_watches"`
+	MaxHintFiles                 int     `json:"max_hint_files"`
 }
 
 func defaultConfig() Config {
@@ -75,8 +77,7 @@ func defaultConfig() Config {
 		Mode: "auto", Action: "observe", Paths: []string{}, AutoRoots: []string{}, ExcludePaths: []string{},
 		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
 		StateFile:    "/tmp/containercacheguard/status.json", SignalMaxAgeSeconds: 10,
-		WebHistorySamples: 3600,
-		LogKeepDays:       30, LogMaxTotalBytes: 1000000000, LogTimezone: "Local",
+		LogKeepDays: 30, LogMaxTotalBytes: 1000000000, LogTimezone: "Local",
 		IntervalMS: 1000, LogIntervalSeconds: 10, WarmupSeconds: 60, RecoveryHealthySeconds: 10, ProtectSeconds: 30, MinFileAgeSeconds: 30, CooldownSeconds: 60, RescanSeconds: 60,
 		CacheTargetRatio: 0.25, Trigger: "budget", MemoryHighRatio: 0.85, MemoryCriticalRatio: 0.95, CriticalMode: "pause", MaxDirtyBytes: 128 * MiB, MaxIOPSIAvg10: 10,
 		ScanBytesPerSecond: 256 * MiB, ReclaimBytesPerSecond: 64 * MiB, InitialReclaimBytesPerSecond: 4 * MiB, RegionBytes: 4 * MiB,
@@ -181,16 +182,21 @@ func (c Config) validate() error {
 	if !filepath.IsAbs(c.StateFile) || (c.BusinessSignal != "" && !filepath.IsAbs(c.BusinessSignal)) {
 		return errors.New("state_file/business_signal 必须为绝对路径")
 	}
-	if c.WebHistorySamples < 60 || c.WebHistorySamples > 21600 {
-		return errors.New("web_history_samples 范围60..21600")
-	}
-	if c.WebTokenFile != "" && !filepath.IsAbs(c.WebTokenFile) {
-		return errors.New("web_token_file 必须为绝对路径")
-	}
-	if e := validateWebListen(c.WebListen, c.WebTokenFile); e != nil {
-		return e
-	}
 	return nil
+}
+
+func (c Config) deprecatedWebFields() []string {
+	fields := []string{}
+	if c.WebListen != "" {
+		fields = append(fields, "web_listen")
+	}
+	if c.WebTokenFile != "" {
+		fields = append(fields, "web_token_file")
+	}
+	if c.WebHistorySamples != 0 {
+		fields = append(fields, "web_history_samples")
+	}
+	return fields
 }
 func beneath(p, root string) bool {
 	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))

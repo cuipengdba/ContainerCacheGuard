@@ -11,3 +11,5 @@ __pycache__/
 /binary-info.txt
 /elf-header.txt
 /metrics-benchmark-results.log
+/logging-benchmark-results.log
+/dependency-results.txt

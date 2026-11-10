@@ -1,10 +1,10 @@
-# DBS/HISDBS 与独立备份容器：部署和 Web 使用
+# DBS/HISDBS 与独立备份容器：部署、日志和状态
 
 本页给运维人员一条可检查的接入路线。ContainerCacheGuard（下称 CCG）是常驻进程，不替代 PostgreSQL、DBS 或 `pg_basebackup`。当前94迁移与验证目标为 **PostgreSQL 14.19**；下列配置仍是接入设计，尚未表示四容器已在94完成部署与验收。
 
-## rc.9监控四个实例
+## rc.11监控四个实例
 
-沿用每个实例的只读Web监听和认证，读取metrics/healthz/readyz；无需额外扫描PGDATA。[接入说明](MONITORING.zh.md)和[Prometheus例子](../deploy/prometheus.example.yml)记录目标标签、字段可用性和口径。**不要把CCG健康失败用作同一DBS业务容器的liveness条件，也不要因sidecar监测暂不可用就让数据库Pod整体不就绪。** 本轮只交付接口和示例，没有在94自动安装Prometheus或更改Pod探针。
+新版已取消内置HTTP服务，四实例各写自己的状态JSON和每日日志，不需要开放9898等端口、页面令牌或转发。当前页面保留的旧版现场观测属于历史，并不表示现场已经升级。日志目录、UID与30天/1GB清理见[日志手册](LOGGING.zh.md)；持久采集及健康边界见[监控说明](MONITORING.zh.md)。CCG故障只能影响自身，不应触发数据库重启。
 
 ## rc.7接入已有容器时怎么升级
 
@@ -103,9 +103,7 @@
   "paths": ["/opt/postgresql/pgdata/base"],
   "cgroup_path": "",
   "state_file": "/run/ccg-source/status.json",
-  "cache_target_bytes": 2147483648,
-  "web_listen": "127.0.0.1:9898",
-  "web_history_samples": 3600
+  "cache_target_bytes": 2147483648
 }
 ```
 
@@ -119,9 +117,7 @@
   "exclude_names": ["lost+found"],
   "cgroup_path": "",
   "state_file": "/run/ccg-output/status.json",
-  "cache_target_bytes": 1073741824,
-  "web_listen": "127.0.0.1:9898",
-  "web_history_samples": 3600
+  "cache_target_bytes": 1073741824
 }
 ```
 
@@ -169,20 +165,16 @@ pg_verifybackup /backup/20261107-full
 
 **跨容器释放已做一个限定范围的实测。** 2026-11-08在94的DBS PGDATA中创建64MiB临时探针文件，由数据库容器读取后，`vmtouch`测到全部16,384页驻留。独立备份Pod通过只读PGDATA挂载运行CCG rc4、对同一文件发`fadvise`建议，CCG记录64MiB`advice_bytes`和64MiB`observed_net_reduction_bytes`，DBS容器再次测得0页驻留。临时文件随后删除。由此可确认：**同节点、同一底层inode且备份容器具有读权限时，建议可跨容器影响数据库容器读入的普通文件页缓存；只读挂载足够。** 它不能跨主机/PVC副本影响另一inode，也不能释放数据库匿名内存、shared buffers或保证热点不重新驻留。首轮用1GiB真实测试库关系文件时，旧版CCG虽进入CONTROL，但在25秒窗口`advice_bytes=0`。修复扫描令牌饥饿和重复扫描后，rc5候选在相同64MiB临时文件、较低64MiB/s采样预算下，25秒仍记录64MiB建议、64MiB净下降，数据库容器再次测得0页驻留；累计采样512MiB、自报CPU约0.73%单核、RSS约9MiB。第二次临时文件已删除。**这仍只是单文件机制测试，不能推断百万文件、真实备份和业务并发已通过。**
 
-## 打开实时页面
+## 查看四实例日志和当前状态
 
-每个容器的 Web 监听地址需按 Pod 网络设置。**94当前 DBS/HISDBS 均为 `hostNetwork: true`，所以两者共享宿主机网络命名空间，不能同时绑定 `127.0.0.1:9898`。** 四实例须选择互不冲突的监听端口，并由安全的本地端口转发或鉴权代理访问。普通 Pod 可按下例使用端口转发：
+不再运行Web服务。分别在每个容器内使用自己的配置与日志目录：
 
 ```sh
-kubectl -n <namespace> port-forward pod/<hisdbs-pod> 9898:9898
-# 浏览器打开 http://127.0.0.1:9898/
+containercacheguard status --config /opt/ccg/config/dbs.json
+tail -n 20 /opt/ccg/state/logs/dbs/containercacheguard-2026-11-10.log
 ```
 
-直接打开 `http://<节点IP>:9898/` **不会自动连到普通 Pod 内页面**：需要显式转发或网关。94的四个候选实例均采用`hostNetwork: true`，计划按DBS业务9898、HISDBS业务9899、DBS备份9900、HISDBS备份9901分配不同端口，并用每实例令牌保护只读页面。只有实际Pod启动、端口监听与认证测试通过后，才能从节点IP访问。若改成普通Pod网络，则使用`kubectl port-forward`或有TLS与鉴权的代理；转发本身不增加用户鉴权，Pod重建后还需重新核对页面状态。
-
-逐个查看四个 Pod 时可以选不同本地端口：`9899:9898`、`9900:9898` 等。页面每 2 秒获取状态，曲线每 15 秒刷新，显示采样时间和过期提示。`file` 包含 `shmem`，页面单列 `max(0,file-shmem)` 估算普通文件缓存；`active_file`/`inactive_file` 是 cgroup 的 LRU 分类。匿名内存、共享内存、slab 只展示，不能被文件范围释放建议清除。页面显示的 `advice_bytes` 是建议范围，净驻留下降另列，两者不能混为一谈。
-
-若必须监听非回环地址，配置 `web_token_file`，只授予运行UID读取权限（单UID可用0600，94候选用root属主、进程组998、0640），用户名 `ccg`，并通过 TLS 反向代理或安全隧道访问。HTTP Basic 自身不加密，不应将开放的 HTTP 端口直接暴露在生产网络。页面与 API 均只读：`/api/v1/status` 返回最新状态，`/api/v1/history` 返回最近有界采样；重启后历史清零。48 小时统计要由持久采集保存，不能依赖浏览器进程内曲线。
+其它实例替换对应配置和日志路径。`status`会对过期状态报错，独立采集器可定时读取状态JSON保存长时间序列；不能每次运行`scan`当作轻量监控。四实例各自持久化日志、状态文件并设置实际UID权限。业务健康仍独立检查SQL延迟、错误、数据库启动时间和Kubernetes事件。
 
 ## 压力测试与验收
 

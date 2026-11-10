@@ -19,7 +19,9 @@
   "paths": [
     "/backup"
   ],
-  "exclude_names": ["lost+found"],
+  "exclude_names": [
+    "lost+found"
+  ],
   "state_file": "/tmp/ccg-output/status.json",
   "critical_mode": "bounded",
   "cooldown_seconds": 5,

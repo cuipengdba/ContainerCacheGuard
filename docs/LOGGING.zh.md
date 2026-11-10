@@ -63,7 +63,7 @@ tail -n 20 /opt/ccg/state/logs/dbs/containercacheguard-2026-11-10.log
 
 状态JSON新增`logging`：报告目录、当前文件、保留天数、容量、受管总字节、删除文件数和当天截断次数。删除/截断次数自当前进程启动累计；重启会归零，文件仍追加到当天原文件。状态字节数是最近采样时的值，不要求与随后一次追加逐字节同步。
 
-Prometheus提供`ccg_log_managed_bytes`、`ccg_log_files_deleted_total`、`ccg_log_current_file_truncations_total`。指标不包含日志路径标签。`log_cleanup`事件明确记录删除数量以及是否截断当天文件。
+rc.11已取消Prometheus及全部HTTP服务；清理数量和截断次数通过状态`logging`及`log_cleanup`事件查看。
 
 ## 对业务资源的考虑与故障行为
 
@@ -72,3 +72,21 @@ Prometheus提供`ccg_log_managed_bytes`、`ccg_log_files_deleted_total`、`ccg_l
 开始采样、日志维护和状态写入前先撤销旧回收许可；写入返回后也只有新鲜且保护允许的采样才能重新授权。日志写失败时CCG停止新动作并错误退出；由现有独立看护只重启CCG，不重启数据库。它不替代磁盘空间规划或集群日志保留策略。
 
 本版本回归用稀疏文件验证真实1GB大小边界，以避免测试本身写入GB数据；这不是1GB物理写入性能测试。ENOSPC、每日切分、重启追加和危险文件拒绝也分别验证。现场长期IO成本需继续实测。
+
+## rc.11：取消页面后，详细日志怎么看
+
+每条`event=status`保留原有顶层`metrics/counters/decision/protection/logging/diagnostics/recovery`，并增加以下字段，旧的JSON消费程序仍可读取原字段。
+
+| 字段 | 含义 |
+| --- | --- |
+| `level` | INFO为常规状态；BACKOFF/SUSPENDED为WARN；CRITICAL或采集失败为ERROR；等级不等于数据库故障判定 |
+| `message` | 中文说明：仅观察、保护缺项、脏页写回、IO过高、业务信号暂停、恢复等待、正常有界处理等 |
+| `summary` | MiB单位的当前/普通文件/匿名/共享/slab/活跃与非活跃文件/脏页/写回/自身RSS/宿主余量，以及IO MiB/s和自身CPU百分比；保留两位小数，未知或过期为null |
+| `since_previous_log` | 上次状态日志以来的时长、扫描字节、建议字节、驻留复查下降字节、重新驻留字节和错误增量；首次为null，进程/范围变化或计数回退时valid=false，不将负差解释为工作量 |
+| `ordinary_file_bytes_change` | 两次可用快照的普通文件页差值，可以为负；内核回收或业务活动也会改变它，不能归因于CCG |
+
+示例中文说明会写“脏页或写回量较高，暂停新建议以免增加写回压力”，关键保护缺失时指出查看`protection.missing`。`advice_bytes`是发建议覆盖的范围，不保证内核实际释放；复查下降只描述被观测区域，不能当作全容器节省量。详细原始值、可用性和原因保留在同一条JSON中。
+
+默认每10秒记录完整状态；检测到决策变化时尽早记录，但状态记录最多每秒一条。更短的瞬态可能合并，启动/停止/清理事件单独记录。详情来源都是已有采样和计数，不额外扫描目录、读取文件内容或逐文件打印日志。保留更多信息仍会增加日志体积，要按实际日志量评估1GB预算；容量优先于保满30天。
+
+启动记录含版本、源码提交、架构、PID、范围、关键预算和明确的`web_service_enabled:false`。旧Web参数存在时只记录一次`deprecated_web_settings_ignored`及字段名，不输出旧监听值或令牌路径，不打开令牌文件。旧参数不能重新开启Web。

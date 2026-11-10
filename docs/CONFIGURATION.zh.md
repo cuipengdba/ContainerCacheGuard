@@ -14,7 +14,7 @@
 | `status --config 文件` | 读取状态，过期时返回非零 | 否 |
 | `scan --path 目录` | 一次完整只读驻留扫描，独立测量当前覆盖范围 | 否，但遍历与查询有成本 |
 
-通用选项：`--config`、`--mode auto|paths`、`--action observe|enforce`、可重复的 `--path`、`--cgroup-path`、`--state-file`、`--cache-target-bytes`、`--reclaim-bytes-per-second`、`--scan-bytes-per-second`、`--web-listen`、`--web-token-file`、`--duration 30s/5m/2h`。未指定 duration 则持续运行。命令行覆盖 JSON 同名设置；`--path` 默认选择 paths 模式，与显式 auto 冲突时会报错。
+通用选项：`--config`、`--mode auto|paths`、`--action observe|enforce`、可重复的 `--path`、`--cgroup-path`、`--state-file`、`--cache-target-bytes`、`--reclaim-bytes-per-second`、`--scan-bytes-per-second`、`--duration 30s/5m/2h`。未指定 duration 则持续运行。命令行覆盖 JSON 同名设置；`--path` 默认选择 paths 模式，与显式 auto 冲突时会报错。
 
 `scan` 可能需要数分钟完整覆盖大目录，不应放进每秒监控循环。其输出 `Complete=false` 或非零退出码不能当成完整结果。源码中 scan 的大小写字段保留 `Files/Bytes/Resident/Errors/Complete/Seconds`；daemon 状态字段为 snake_case。
 
@@ -30,9 +30,9 @@
 | `exclude_names` | 见生成配置 | 按每级目录/文件的完整名字排除。数据库源端默认保护 WAL、global、事务/复制/共享内存相关 PG 目录；自定义数组会整体替换默认数组。备份输出卷应独立配置，是否纳入成品副本的 WAL 必须依据写入保护及校验实测决定 |
 | `cgroup_path` | 自动检测 | 本容器 memory cgroup；sidecar 应显式指定业务容器的只读挂载路径。必须是真实 cgroup 文件系统 |
 | `state_file` | `/tmp/containercacheguard/status.json` | 状态输出和同名 `.lock` 文件；父目录必须属于当前 UID，权限 0700。不同受控范围使用不同目录 |
-| `web_listen` | 空，关闭 | 内置只读 Web 的 TCP 监听地址，例如 `127.0.0.1:9898`。端口须可用；非回环地址必须设置 token 文件 |
-| `web_token_file` | 空 | HTTP Basic 的密码文件绝对路径，用户名固定 `ccg`；内容去掉首尾空白后为 16..4096 字节。启动时读取一次，改动需重启。远程访问还要 TLS 或安全隧道，Basic 本身不加密 |
-| `web_history_samples` | `3600` | 页面最近历史样本上限，范围60..21600；每秒采样时默认约1小时。环形数组有界，重启后历史清零；长期图表另用持久采集 |
+| `web_listen` | 新配置不生成 | 已停用；只兼容读取旧配置，不监听端口 |
+| `web_token_file` | 新配置不生成 | 已停用；只兼容读取，不打开令牌文件 |
+| `web_history_samples` | 新配置不生成 | 已停用；不分配页面历史缓冲 |
 
 自动发现磁盘类型的挂载点（ext4/xfs/btrfs/overlay/f2fs），以及 `/data`、`/backup`、`/backups`、`/pgdata`、`/var/lib/postgresql`、`/var/lib/mysql`、`/app/data`、`/opt/data` 和 `PGDATA`。过滤系统目录、被排除路径、符号链接和不支持文件系统。自动模式不保证找到任意应用所有缓存文件；容器内部特殊路径可以通过 auto_roots 补充。可执行文件、共享库、静态库、非普通文件、短于一页的文件跳过。
 
@@ -125,18 +125,16 @@ v2读取可见祖先的有限额与对应`memory.current`，记录占用比例�
 - `indexed_files`、`index_rotations`、`completed_inventory_sweeps`：分别是当前工作索引大小、索引轮换次数和完整目录遍历次数。索引轮换次数上升表明文件数超过工作索引；完整遍历次数为0时不能声称覆盖整棵目录。`inventory_overflow` 仍记录目录队列或区域等其它预算溢出。文件内容不会被守护进程读取来判断冷热。
 - `pending_hint_paths`：已收到事件但等待发现额度的路径数；`hint_discovery_retries`是从队列重新尝试发现的累计次数，不保证成功；`hint_queue_dropped`累计队列已满或到期丢弃数。队列去重，等待有效期至少60秒，仍以普通补扫兜底。
 - `diagnostics`：只解释当前可观测构成，不改变策略。`valid=false`时不可据此判断健康；`other_charged_bytes`是当前计费减普通文件页后的近似剩余，含匿名/共享/内核等，不能理解为另一类可直接清空的缓存；`file_target_excess_bytes`是超过文件软目标的估算值，不是承诺释放量。
-- `sample_interval_ms`：采样周期，网页用它识别长空窗；采集错误及空窗曲线断线，不以零值填补。
+- `sample_interval_ms`：采样周期，外部采集用它识别空窗；错误或过期样本不能解释为零。
 - `recovery`：`pending`表示既往风险后的恢复窗口尚未完成；`healthy_seconds/required_seconds`说明计时进度；`guard_stop_transitions_total`为连续风险阶段的进入次数，`recovery_resumes_total`为健康窗口完成次数。窗口完成后当前策略仍可因低于目标保持IDLE；不保证一定发出建议。
 - `degraded`：例如 PSI 缺失、没有 kubelet Summary、其它缓存只诊断。未知不等于健康。
 - `worker_busy_seconds`：单工作队列执行延迟；超过5秒会停止派发新的建议，不启动替代工作线程制造堆积。
 
 状态目录包含进程号、路径及资源指标，默认只允许相同 UID 访问。每个状态文件有进程锁；它不能检测两个不同容器使用不同状态文件却管理同一个 inode 的情况，部署时必须保证同一范围只有一个治理者。
 
-Web 页面和 `/api/v1/status`、`/api/v1/history` 均为只读，不提供开关回收、修改配置或执行系统命令的接口。状态包含路径及 cgroup 标识；默认只绑定回环地址。服务端限制并发请求数，设有读取/写入超时；`web_history_samples` 限制历史内存。页面的“普通文件缓存”按 `max(0,file-shmem)` 估算，`active_file`/`inactive_file` 是内核 LRU 分类，不等于逐文件的精确冷热判定。
+## rc.11：取消Web服务
 
-## rc.9只读监控接口
-
-复用web_listen/web_token_file；无新增必填配置。`/healthz`表示CCG HTTP响应，`/readyz`表示数据新鲜有效，`/metrics`是Prometheus文本格式。数据新鲜窗口为max(3倍采样周期,1秒)，未来超过1秒的状态/指标时间拒绝；指标有误或过期时资源值和工作计数省略，不补零。`available_metrics`描述字段可采集性，需同时确认整个样本无error。状态新增`web_address`记录实际监听地址，尤其适用于端口0；不会自动设置节点转发。详细指标、认证、四实例抓取及业务Pod探针边界见[监控说明](MONITORING.zh.md)。
+不再提供页面、HTTP API、Prometheus、healthz或readyz端点，也不监听任何HTTP端口。状态新增`web_service_enabled:false`，不再写`web_address`。旧`web_listen`、`web_token_file`、`web_history_samples`和CLI的`--web-listen`、`--web-token-file`仅兼容读取，启动时一次提示已停用，不读取令牌或创建历史缓冲；新生成配置省略这些字段。详细日志及外部状态采集见[监控说明](MONITORING.zh.md)。
 
 ## rc.10：日志与保护输入完整性
 

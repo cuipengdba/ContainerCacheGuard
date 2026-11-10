@@ -38,7 +38,8 @@ auto 自动发现磁盘数据挂载、常用数据目录和 PGDATA；paths 仅�
 --duration 30s 限制运行时长；默认持续运行。--config 支持完整 JSON 参数，未知参数报错。
 run 可覆盖 --cache-target-bytes、--reclaim-bytes-per-second、--cgroup-path、--state-file。
 SIGUSR1 暂停新释放，SIGUSR2 恢复，SIGTERM/SIGINT 退出；配置修改需重启。
-web_listen 可选启用内置只读页面；默认关闭。非回环地址必须配置 web_token_file。
+不提供Web/HTTP服务、不监听端口；通过每日日志和status状态文件查看。
+日志默认每天一个文件，最多30个日历日、合计1GB；目录/天数/容量/时区可配置。
 scan 是只读驻留扫描，输出不是热度；可能需要完整遍历，不属于常态轻量监控。
 
 只操作已授权路径下支持的普通磁盘文件。不会删除文件、清空应用堆、清理全机缓存、
@@ -73,8 +74,8 @@ func entry(args []string) error {
 	action := fs.String("action", "", "observe 或 enforce")
 	cg := fs.String("cgroup-path", "", "目标 memory cgroup 绝对路径")
 	state := fs.String("state-file", "", "状态 JSON 文件绝对路径")
-	webListen := fs.String("web-listen", "", "只读 Web 监听地址，例如 127.0.0.1:9898")
-	webTokenFile := fs.String("web-token-file", "", "Web HTTP Basic 密钥文件绝对路径；用户名 ccg")
+	webListen := fs.String("web-listen", "", "已停用，仅兼容旧启动命令；不会监听HTTP端口")
+	webTokenFile := fs.String("web-token-file", "", "已停用，仅兼容旧启动命令；不会读取令牌文件")
 	var paths pathsFlag
 	fs.Var(&paths, "path", "治理路径，可重复（设置后选择 paths 模式）")
 	target := fs.Int64("cache-target-bytes", -1, "容器普通文件缓存软预算，字节")
@@ -165,6 +166,8 @@ func entry(args []string) error {
 	if cmd == "doctor" {
 		r, e := newMetricReader(c.CgroupPath)
 		result := map[string]any{"version": version, "architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "uid": os.Geteuid(), "mode": c.Mode, "action": c.Action, "roots": roots, "file_cache_backend": "mincore+fadvise", "other_caches": "diagnostic_only", "node_pressure_source": "host MemAvailable (not kubelet Summary)"}
+		result["web_service_enabled"] = false
+		result["deprecated_config_fields"] = c.deprecatedWebFields()
 		if e != nil {
 			result["metrics_error"] = e.Error()
 		} else {
@@ -224,7 +227,7 @@ type Status struct {
 	Mode              string            `json:"mode"`
 	Action            string            `json:"action"`
 	IntervalMS        int               `json:"sample_interval_ms"`
-	WebAddress        string            `json:"web_address,omitempty"`
+	WebServiceEnabled bool              `json:"web_service_enabled"` // Always false; no HTTP listener exists.
 	Decision          Decision          `json:"decision"`
 	Metrics           Metrics           `json:"metrics"`
 	Counters          Counters          `json:"counters"`
@@ -307,9 +310,10 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	}
 	defer func() {
 		allow.Store(false)
-		event := map[string]any{"time": time.Now(), "event": "daemon_stopped"}
+		event := map[string]any{"time": time.Now(), "event": "daemon_stopped", "level": "INFO", "message": "CCG已停止；不接管数据库或业务进程。"}
 		if runErr != nil {
 			event["error"] = runErr.Error()
+			event["level"] = "ERROR"
 		}
 		if err := logs.WriteJSON(event); runErr == nil && err != nil {
 			runErr = err
@@ -318,8 +322,13 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 			runErr = err
 		}
 	}()
-	if e = logs.WriteJSON(map[string]any{"time": time.Now(), "event": "daemon_started", "version": version, "pid": os.Getpid()}); e != nil {
+	if e = logs.WriteJSON(startupLog(c, roots)); e != nil {
 		return e
+	}
+	if fields := c.deprecatedWebFields(); len(fields) > 0 {
+		if e = logs.WriteJSON(map[string]any{"time": time.Now(), "event": "deprecated_web_settings_ignored", "level": "WARN", "fields": fields, "message": "Web服务已取消；旧Web配置已忽略，不监听端口，也不读取令牌文件。"}); e != nil {
+			return e
+		}
 	}
 	r, e := readerFactory(c.CgroupPath)
 	if e != nil {
@@ -333,13 +342,6 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 		var stop context.CancelFunc
 		ctx, stop = context.WithTimeout(ctx, duration)
 		defer stop()
-	}
-	web, webErr := startWeb(ctx, c)
-	if webErr != nil {
-		return webErr
-	}
-	if web != nil {
-		defer web.close()
 	}
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR1, syscall.SIGUSR2)
@@ -365,13 +367,11 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	}()
 	started := time.Now()
 	s := Status{Time: started, Version: version, PID: os.Getpid(), Mode: c.Mode, Action: c.Action, Roots: roots, IntervalMS: c.IntervalMS}
-	if web != nil {
-		s.WebAddress = web.listen.Addr().String()
-	}
 	m := r.sample(c)
 	oomBaseline := m.OOMKill
 	oomBaselineReady := m.Available["oom_kill_total"]
 	lastLog := time.Time{}
+	var previousLog *Status
 	busySince := time.Time{}
 	var recovery recoveryGate
 	nextSample := time.Time{}
@@ -384,8 +384,10 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 			allow.Store(false)
 			s.Time = time.Now()
 			s.Decision = Decision{State: "STOPPED", Reason: "shutdown"}
-			atomicJSON(c.StateFile, s)
-			return logs.WriteJSON(s)
+			if e = atomicJSON(c.StateFile, s); e != nil {
+				return fmt.Errorf("final state write failed: %w", e)
+			}
+			return logs.WriteJSON(detailedStatusLog(s, previousLog))
 		case sig := <-sigs:
 			if sig == syscall.SIGUSR1 {
 				s.Paused = true
@@ -453,15 +455,15 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					allow.Store(false)
 					return fmt.Errorf("state write failed; stopping: %w", e)
 				}
-				if web != nil {
-					web.publish(s)
-				}
-				if now.Sub(lastLog) >= time.Duration(c.LogIntervalSeconds)*time.Second {
-					if e = logs.WriteJSON(s); e != nil {
+				changed := previousLog == nil || s.Decision != previousLog.Decision || s.Paused != previousLog.Paused || s.Metrics.Error != previousLog.Metrics.Error
+				if now.Sub(lastLog) >= time.Duration(c.LogIntervalSeconds)*time.Second || (changed && now.Sub(lastLog) >= time.Second) {
+					if e = logs.WriteJSON(detailedStatusLog(s, previousLog)); e != nil {
 						allow.Store(false)
 						return fmt.Errorf("daily log write failed; stopping advice: %w", e)
 					}
 					lastLog = now
+					logged := s
+					previousLog = &logged
 				}
 				age := time.Since(m.Time)
 				allow.Store(s.Decision.Allow && age >= 0 && age <= time.Duration(c.IntervalMS)*3*time.Millisecond)

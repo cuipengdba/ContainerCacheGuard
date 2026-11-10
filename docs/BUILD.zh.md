@@ -20,11 +20,11 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o con
 ```sh
 go vet ./...
 go test -race -count=1 -v ./...
-node scripts/test-web.cjs
+go list -deps . # 不应包含net/http；新版没有HTTP服务
 python3 scripts/integration.py ./dist/containercacheguard-linux-amd64 --output integration-results.json
 ```
 
-网页回归使用Node.js 22内置模块，不需要安装npm包；Node.js不是程序运行依赖。它检查实际内嵌脚本对未知值、有效零值和图表空窗的处理；不替代真实浏览器的视觉验收。
+rc.11取消页面及HTTP服务，不再使用Node网页回归。原生CLI检查实际进程没有TCP监听，即使旧配置带占用端口和令牌FIFO也能运行；另验证详细日志、未知值、增量及错误边界。旧版网页结果不能计入本版。
 
 race 测试需要本机可用的 C 工具链；这不改变最终静态程序的依赖。Linux 文件机制测试需支持的真实磁盘文件系统；tmpfs 不作为支持目标。集成测试只在临时目录造文件，不修改 cgroup 限额、不全机清缓存。持续压力、真实数据、Kubernetes/OpenShift 验收另见测试报告。
 

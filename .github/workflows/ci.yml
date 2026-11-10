@@ -45,19 +45,17 @@ jobs:
           ! readelf -d dist/containercacheguard-linux-${{ matrix.arch }} | grep -q NEEDED
       - name: CLI integration
         run: python3 scripts/integration.py dist/containercacheguard-linux-${{ matrix.arch }} --output integration-results.json
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Embedded Web behavior
+      - name: No HTTP service dependencies
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/test-web.cjs | tee web-results.json
-      - name: Snapshot exporter encoding cost
+          go list -deps . > dependency-results.txt
+          if grep -qx 'net/http' dependency-results.txt; then echo 'HTTP server dependency must be absent'; exit 1; fi
+      - name: Detailed log encoding cost
         shell: bash
         run: |
           set -euo pipefail
-          go test -run '^$' -bench '^BenchmarkPrometheusSnapshot$' -benchtime=1000x -benchmem | tee metrics-benchmark-results.log
+          go test -run '^$' -bench '^BenchmarkDetailedStatusLog$' -benchtime=1000x -benchmem | tee logging-benchmark-results.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
