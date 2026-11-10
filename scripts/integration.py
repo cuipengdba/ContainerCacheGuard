@@ -91,35 +91,14 @@ def main():
         assert hashlib.sha256(file.read_bytes()).hexdigest()==digest
         checks.append('recovery_keeps_content_unchanged')
         cfg.update(business_signal='')
-        # A fake cgroup is only a private fixture. No actual cgroup is modified.
+        # Production must continue rejecting ordinary files as cgroup metrics.
         fake=w/'fake-cgroup';fake.mkdir()
-        for name,content in {'memory.current':'134217728','memory.max':'max',
-                'memory.stat':'file 134217728\nshmem 0\nfile_dirty 0\nfile_writeback 0\nanon 0\n',
-                'memory.events':'oom_kill 0','io.stat':''}.items():
-            (fake/name).write_text(content)
-        file.read_bytes()  # Rewarm only the private test file after earlier advice.
-        cfg.update(cgroup_path=str(fake),max_io_psi_avg10=10,state_file=str(w/'guards/status.json'))
+        cfg.update(cgroup_path=str(fake),state_file=str(w/'fake/status.json'))
         config.write_text(json.dumps(cfg))
-        with (w/'guards.log').open('w') as log:
-            p=subprocess.Popen([binary,'run','--config',str(config)],stdout=log,stderr=subprocess.STDOUT)
-            try:
-                state=w/'guards/status.json'
-                s=wait_state(state,lambda s:'io_psi_avg10' in s.get('protection',{}).get('missing_metrics',[]))
-                assert not s['decision']['allow'] and s['counters']['advice_bytes']==0
-                base='http://'+s['web_address']
-                with urllib.request.urlopen(base+'/readyz',timeout=3) as response:assert response.status==200
-                with urllib.request.urlopen(base+'/metrics',timeout=3) as response:exposition=response.read().decode()
-                assert 'ccg_protection_ready 0\n' in exposition
-                assert 'ccg_protection_metric_missing{metric="io_psi_avg10"} 1\n' in exposition
-                checks.append('missing_enabled_psi_stops_advice_but_monitoring_ready')
-                (fake/'io.pressure').write_text('some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n')
-                wait_state(state,lambda s:s['decision']['reason']=='waiting_healthy_recovery')
-                time.sleep(.5)
-                assert json.loads(state.read_text())['counters']['advice_bytes']==0
-                wait_state(state,lambda s:s['protection']['ready'] and s['counters']['advice_bytes']>0)
-                checks.append('guard_restoration_requires_continuous_recovery')
-            finally:p.terminate();p.wait(10)
-        cfg.update(cgroup_path='',max_io_psi_avg10=0)
+        rejected=subprocess.run([binary,'run','--config',str(config),'--duration','2s'],capture_output=True,text=True,timeout=5)
+        assert rejected.returncode!=0 and 'real cgroup filesystem' in rejected.stderr
+        checks.append('fake_cgroup_filesystem_is_rejected')
+        cfg.update(cgroup_path='')
         # Auto scope is tested separately, in observe mode; it never evicts
         # arbitrary runner data while discovering mounted data directories.
         cfg.update(mode='auto',paths=[],auto_roots=[str(data)],action='observe',state_file=str(w/'auto/status.json'))

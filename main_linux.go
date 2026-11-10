@@ -288,7 +288,13 @@ func business(c Config, m *Metrics) {
 	m.BusinessP99 = v.P99MS
 	m.BusinessPause = v.Pause
 }
-func runDaemon(c Config, roots []string, duration time.Duration) (runErr error) {
+func runDaemon(c Config, roots []string, duration time.Duration) error {
+	return runDaemonWithReader(c, roots, duration, newMetricReader)
+}
+
+// The factory is an internal test seam; the CLI always uses the real-cgroup
+// validating factory above. No flag or configuration can select a fake reader.
+func runDaemonWithReader(c Config, roots []string, duration time.Duration, readerFactory func(string) (*metricReader, error)) (runErr error) {
 	lock, e := lockState(c.StateFile)
 	if e != nil {
 		return e
@@ -315,7 +321,7 @@ func runDaemon(c Config, roots []string, duration time.Duration) (runErr error) 
 	if e = logs.WriteJSON(map[string]any{"time": time.Now(), "event": "daemon_started", "version": version, "pid": os.Getpid()}); e != nil {
 		return e
 	}
-	r, e := newMetricReader(c.CgroupPath)
+	r, e := readerFactory(c.CgroupPath)
 	if e != nil {
 		return e
 	}
