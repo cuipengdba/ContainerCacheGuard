@@ -27,3 +27,5 @@
 参考：[内核cgroup接口](https://docs.kernel.org/admin-guide/cgroup-v2.html)、[PSI接口](https://docs.kernel.org/accounting/psi.html)。缺项暂停是CCG的保守策略选择，不是内核自动替CCG实施的行为。
 
 首轮原生CI `42776612907`的单元测试通过，但CLI新增夹具被真实cgroup文件系统校验拒绝，导致集成测试未完成。保持生产校验不变，改由原生单元测试内部注入读数驱动实际daemon/文件建议；CLI另外验证伪造目录继续被拒绝。此失败不计为完整通过，最终结果以修正后CI为准。
+
+第二轮CI `42777396486`中amd64实际daemon故障注入测试触发了默认RSS保护：race测试进程约134MiB，超过128MiB产品默认值，恢复被正确阻止。该测试单独采用512MiB仪器化预算并保留失败诊断；产品默认RSS和自身预算回归不放宽。两轮都不计为完整成功。

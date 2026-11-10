@@ -47,6 +47,10 @@ func TestDaemonMissingGuardPausesAndRecoversRealFileAdvice(t *testing.T) {
 	c.CooldownSeconds = 1
 	c.RecheckSeconds = 1
 	c.MaxCPUPercent = 100
+	// The race-instrumented test process includes every test and its shadow
+	// memory. Keep that instrumentation outside the daemon's default RSS test;
+	// production defaults and separate self-budget tests remain unchanged.
+	c.MaxRSSBytes = 512 * MiB
 	c.RegionBytes = 64 * 1024
 	c.LogIntervalSeconds = 60
 	if err := c.validate(); err != nil {
@@ -81,15 +85,17 @@ func TestDaemonMissingGuardPausesAndRecoversRealFileAdvice(t *testing.T) {
 	wait := func(predicate func(Status) bool) Status {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
+		var last Status
 		for time.Now().Before(deadline) {
 			b, err := os.ReadFile(c.StateFile)
 			var s Status
 			if err == nil && json.Unmarshal(b, &s) == nil && predicate(s) {
 				return s
 			}
+			last = s
 			time.Sleep(20 * time.Millisecond)
 		}
-		t.Fatal("daemon state deadline", c.StateFile)
+		t.Fatalf("daemon state deadline: decision=%+v protection=%+v rss=%d", last.Decision, last.Protection, last.Metrics.RSS)
 		return Status{}
 	}
 	s := wait(func(s Status) bool { return s.Protection != nil && !s.Protection.Ready })
