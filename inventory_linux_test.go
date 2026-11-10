@@ -81,7 +81,7 @@ func TestCompletedFileScanWaitsBeforeRepeating(t *testing.T) {
 	c.Mode = "paths"
 	c.Action = "observe"
 	c.Paths = []string{path}
-	c.RescanSeconds = 3600
+	c.RescanSeconds = 1
 	c.ScanBytesPerSecond = 64 << 20
 	c.MaxOperationsPerSecond = 10000
 	c.WorkerBudgetMS = 500
@@ -115,7 +115,11 @@ func TestCompletedFileScanWaitsBeforeRepeating(t *testing.T) {
 	if e.stats.ScannedBytes != first {
 		t.Fatalf("file was rescanned before interval: %d -> %d", first, e.stats.ScannedBytes)
 	}
-	entry.NextScan = time.Now().Add(-time.Second)
+	// Exercise real expiry, including the cached earliest wakeup introduced in
+	// rc.12. Editing just one private deadline is not equivalent to time passing.
+	if wait := time.Until(entry.NextScan); wait > 0 {
+		time.Sleep(wait + 10*time.Millisecond)
+	}
 	e.scan.tokens = float64(c.ScanBytesPerSecond)
 	e.ops.tokens = float64(c.MaxOperationsPerSecond)
 	e.duty.tokens = 0.5

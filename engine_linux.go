@@ -643,7 +643,12 @@ func noProgressDelay(c Config, streak int) time.Duration {
 	if streak < 1 {
 		streak = 1
 	}
-	return time.Duration(c.CooldownSeconds) * time.Second * time.Duration(1<<uint(streak-1))
+	multiplier := int64(1 << uint(streak-1))
+	seconds := int64(c.CooldownSeconds)
+	if seconds > int64(math.MaxInt64)/int64(time.Second)/multiplier {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(seconds*multiplier) * time.Second
 }
 func (e *engine) invalidateScanWait() {
 	e.scanIdleUntil, e.scanEarliest = time.Time{}, time.Time{}

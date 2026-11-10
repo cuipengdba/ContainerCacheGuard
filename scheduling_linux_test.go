@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -74,6 +75,11 @@ func TestNoProgressBackoffBoundedAndCandidateRetained(t *testing.T) {
 		if got := noProgressDelay(c, streak); got != want {
 			t.Fatalf("streak %d: %s", streak, got)
 		}
+		extreme := c
+		extreme.CooldownSeconds = math.MaxInt64
+		if noProgressDelay(extreme, 4) != time.Duration(math.MaxInt64) {
+			t.Fatal("cooldown overflowed")
+		}
 	}
 	// A real resident file is only queried here: allow=false prohibits advice.
 	path := filepath.Join(t.TempDir(), "probe")
@@ -104,6 +110,30 @@ func TestNoProgressBackoffBoundedAndCandidateRetained(t *testing.T) {
 	e.inspect(r, now, &allow)
 	if e.stats.AdviceBytes != 0 || e.regions[r.Key] != r || r.Check || !r.Due.Equal(now.Add(8*time.Second)) || e.stats.NoProgressBackoffs != 1 {
 		t.Fatalf("retention bypassed: %+v %+v", r, e.stats)
+	}
+}
+func TestScanWaitInvalidatedByHintIdentityChange(t *testing.T) {
+	c := defaultConfig()
+	c.Mode = "paths"
+	path := filepath.Join(t.TempDir(), "changing")
+	if err := os.WriteFile(path, make([]byte, 8192), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(c, nil)
+	defer e.close()
+	e.add(path, 0)
+	now := time.Now()
+	e.known[path].NextScan = now.Add(time.Hour)
+	e.scanIdleUntil = now.Add(time.Hour)
+	e.hints.rememberFile(e, path, now)
+	if err := os.WriteFile(path, make([]byte, 16384), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e.scan.tokens = 1 << 20
+	e.ops.tokens = 100
+	e.hints.sample(e, now, time.Now().Add(time.Second))
+	if !e.scanIdleUntil.IsZero() || !e.known[path].NextScan.IsZero() {
+		t.Fatal("hint identity change retained stale wait")
 	}
 }
 func BenchmarkSleepingIndex(b *testing.B) {
