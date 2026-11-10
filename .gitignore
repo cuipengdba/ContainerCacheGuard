@@ -10,3 +10,4 @@ __pycache__/
 /web-results.json
 /binary-info.txt
 /elf-header.txt
+/metrics-benchmark-results.log

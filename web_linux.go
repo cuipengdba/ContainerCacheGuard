@@ -19,6 +19,7 @@ import (
 // WebPoint contains only the fields needed for a bounded recent-history graph.
 // The separate 48-hour lab collector stores long-term evidence outside the daemon.
 type WebPoint struct {
+	Unavailable  []string  `json:"unavailable,omitempty"`
 	Time         time.Time `json:"time"`
 	Valid        bool      `json:"valid"`
 	IntervalMS   int       `json:"sample_interval_ms"`
@@ -117,6 +118,28 @@ func startWeb(ctx context.Context, c Config) (*webState, error) {
 		rw.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(rw).Encode(points)
 	}))
+	mux.HandleFunc("GET /healthz", auth(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(rw, "ok\n")
+	}))
+	mux.HandleFunc("GET /readyz", auth(func(rw http.ResponseWriter, _ *http.Request) {
+		w.mu.RLock()
+		snapshot, present := w.latest, w.ready
+		w.mu.RUnlock()
+		h := evaluateSnapshot(snapshot, present, time.Now())
+		rw.Header().Set("Content-Type", "application/json")
+		if !h.Ready {
+			rw.WriteHeader(http.StatusServiceUnavailable)
+		}
+		json.NewEncoder(rw).Encode(map[string]any{"ready": h.Ready, "reason": h.Reason})
+	}))
+	mux.HandleFunc("GET /metrics", auth(func(rw http.ResponseWriter, _ *http.Request) {
+		w.mu.RLock()
+		snapshot, present := w.latest, w.ready
+		w.mu.RUnlock()
+		rw.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		fmt.Fprint(rw, prometheusSnapshot(snapshot, present, time.Now()))
+	}))
 	w.server = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); w.close() }()
@@ -130,6 +153,13 @@ func (w *webState) publish(s Status) {
 		InactiveFile: m.InactiveFile, Anon: m.Anon, Shmem: m.Shmem, Slab: m.Slab,
 		Current: m.Current, Limit: m.Limit, Dirty: m.Dirty, Writeback: m.Writeback,
 		IOBPS: m.IOBytesPerSecond}
+	if m.Available != nil {
+		for _, key := range []string{"file_bytes", "active_file_bytes", "inactive_file_bytes", "anon_bytes", "shmem_bytes", "slab_bytes", "current_bytes", "dirty_bytes", "writeback_bytes", "io_bytes_per_second"} {
+			if !m.Available[key] {
+				p.Unavailable = append(p.Unavailable, key)
+			}
+		}
+	}
 	w.mu.Lock()
 	w.latest, w.ready = s, true
 	if len(w.history) >= w.limit {
@@ -182,26 +212,27 @@ pre{overflow:auto;white-space:pre-wrap;color:#c5d4e2;font-size:12px}a{color:#78c
 const fields=[['普通文件缓存','ordinary','#5fd2d8'],['文件缓存 file','file_bytes','#7bb8ff'],['活跃文件 active_file','active_file_bytes','#ffb96b'],['非活跃文件 inactive_file','inactive_file_bytes','#9f8dff'],['匿名内存 anon','anon_bytes','#eb91be'],['共享内存 shmem','shmem_bytes','#73d79c'],['Slab','slab_bytes','#e7d47e'],['内存总量','current_bytes','#ffffff'],['脏页 dirty','dirty_bytes','#ed806e'],['写回 writeback','writeback_bytes','#dcad78']];
 const gib=x=>Number.isFinite(x)?(x/1073741824).toFixed(2)+' GiB':'未知';
 function card(label,value,color){return '<div class="card"><div class="label">'+label+'</div><div class="value" style="color:'+color+'">'+gib(value)+'</div></div>'}
-function render(s,serverTime){const m=s.metrics||{},age=Date.parse(serverTime)-Date.parse(s.time),fresh=Number.isFinite(age)&&age>=-2000&&age<10000;
+function render(s,serverTime){const m=s.metrics||{},time=Date.parse(s.time),mt=Date.parse(m.time),server=Date.parse(serverTime),age=server-Math.min(time,Number.isFinite(mt)?mt:time),window=Math.max(1000,3*(s.sample_interval_ms||1000)),fresh=Number.isFinite(age)&&age>=-1000&&age<=window&&time-server<=1000&&(!Number.isFinite(mt)||mt-server<=1000);
  document.getElementById('state').textContent=(fresh?'实时 · ':'数据已过期 · ')+s.decision.state;
  document.getElementById('state').className='badge'+(fresh?'':' bad');
- document.getElementById('cards').innerHTML=fields.map(([label,key,color])=>card(label,m.error?null:key==='ordinary'?Math.max(0,m.file_bytes-m.shmem_bytes):key==='slab_bytes'&&m.version!==2?null:m[key],color)).join('');
- const dx=s.diagnostics||{};
+ const known=key=>fresh&&!m.error&&(!m.available_metrics||m.available_metrics[key]===true);
+ document.getElementById('cards').innerHTML=fields.map(([label,key,color])=>card(label,key==='ordinary'?(known('file_bytes')&&known('shmem_bytes')?Math.max(0,m.file_bytes-m.shmem_bytes):null):known(key)&&!(key==='slab_bytes'&&m.version!==2)?m[key]:null,color)).join('');
+ const dx=fresh?(s.diagnostics||{}):{valid:false,notes:[{message:'采样已过期，当前构成判断不可用；请检查守护进程和采集状态。'}]};
  document.getElementById('explain').textContent=(dx.notes||[]).map(n=>n.message).join('\n\n')+'\n\n'+(dx.valid?'普通文件页以外的计费用量约 '+gib(dx.other_charged_bytes)+'，其中可能含匿名、共享和内核内存；不是一种可直接清理的缓存。':'当前构成判断不可用，先检查采集错误。');
  document.getElementById('explain').textContent+='\n\n发现提示：等待 '+(s.counters.pending_hint_paths||0)+' 个，重试 '+(s.counters.hint_discovery_retries||0)+' 次，队列丢弃 '+(s.counters.hint_queue_dropped||0)+' 次。丢弃后仍依赖普通补扫。';
- const measured=(value,format)=>!m.error&&Number.isFinite(value)?format(value):'未知';
- const mem=value=>measured(value,gib),decimal=value=>measured(value,n=>n.toFixed(1));
+ const measured=(value,format,key)=>fresh&&!m.error&&(!key||known(key))&&Number.isFinite(value)?format(value):'未知';
+ const mem=(value,key)=>measured(value,gib,key),decimal=(value,key)=>measured(value,n=>n.toFixed(1),key);
  document.getElementById('detail').textContent=[
   '采样：'+s.time,
   '容器：'+m.cgroup,
   '策略：'+s.mode+' / '+s.action,
   '状态：'+s.decision.state+' · '+s.decision.reason,
   '采集错误：'+(m.error||'无'),
-  'IO：'+decimal(m.io_bytes_per_second/1048576)+' MiB/s · IO PSI：'+(!m.error?(m.io_psi_avg10??'未知'):'未知'),
-  '本容器用量：'+mem(m.current_bytes)+' · 可见最严限额：'+(m.limit_bytes?mem(m.limit_bytes):'未知'),
-  '共享父组用量：'+(!m.error&&m.pressured_ancestor_limit_bytes?mem(m.pressured_ancestor_current_bytes)+' / '+mem(m.pressured_ancestor_limit_bytes):'未知或未见有限额')+' · 宿主可用：'+mem(m.host_memavailable_bytes),
-  'OOM kill：'+(m.version===2?measured(m.oom_kill_total,String):'未知')+' · 建议范围：'+gib(s.counters.advice_bytes||0)+' · 净驻留下降：'+gib(s.counters.observed_net_reduction_bytes||0),
-  '自身 RSS：'+decimal(m.self_rss_bytes/1048576)+' MiB · CPU：'+decimal(m.self_cpu_percent)+'%',
+  'IO：'+decimal(m.io_bytes_per_second/1048576,'io_bytes_per_second')+' MiB/s · IO PSI：'+decimal(m.io_psi_avg10,'io_psi_avg10'),
+  '本容器用量：'+mem(m.current_bytes,'current_bytes')+' · 可见最严限额：'+(m.limit_bytes?mem(m.limit_bytes,'limit_bytes'):'未知'),
+  '共享父组用量：'+(!m.error&&m.pressured_ancestor_limit_bytes?mem(m.pressured_ancestor_current_bytes)+' / '+mem(m.pressured_ancestor_limit_bytes):'未知或未见有限额')+' · 宿主可用：'+mem(m.host_memavailable_bytes,'host_memavailable_bytes'),
+  'OOM kill：'+(m.version===2?measured(m.oom_kill_total,String,'oom_kill_total'):'未知')+' · 建议范围：'+gib(s.counters.advice_bytes||0)+' · 净驻留下降：'+gib(s.counters.observed_net_reduction_bytes||0),
+  '自身 RSS：'+decimal(m.self_rss_bytes/1048576,'self_rss_bytes')+' MiB · CPU：'+decimal(m.self_cpu_percent,'self_cpu_percent')+'%',
   '文件页 refault：'+(m.file_refault_rate_valid===true?decimal(m.file_refaults_per_second):'未知')+' 次/秒（不能单独归因于 CCG）',
   '健康恢复：'+(s.recovery?.pending?'等待连续有效采样 '+(s.recovery.healthy_seconds||0).toFixed(1)+' / '+s.recovery.required_seconds+' 秒':'无需等待或已完成')+' · 恢复次数：'+(s.recovery?.recovery_resumes_total||0),
   '目录遍历：'+(s.counters.completed_inventory_sweeps||0)+'轮 · 文件索引轮换：'+(s.counters.index_rotations||0)+'次',
@@ -222,7 +253,7 @@ function graph(h){
   x.strokeStyle=color;x.lineWidth=2;x.beginPath();let previous=null;
   for(const p of h){
    const t=Date.parse(p.time),value=p[key];
-   if(p.valid===false||!Number.isFinite(t)||!Number.isFinite(value)){previous=null;continue}
+   if(p.valid===false||p.unavailable?.includes(key)||!Number.isFinite(t)||!Number.isFinite(value)){previous=null;continue}
    const px=51+(w-60)*(t-first)/span,py=15+(ht-35)*(1-value/max);
    const gap=previous&&t-Date.parse(previous.time)>Math.max(10000,3*(p.sample_interval_ms||1000),3*(previous.sample_interval_ms||1000));
    if(!previous||gap)x.moveTo(px,py);else x.lineTo(px,py);

@@ -3,38 +3,39 @@ package main
 import "time"
 
 type Metrics struct {
-	Time                  time.Time `json:"time"`
-	Cgroup                string    `json:"cgroup"`
-	Version               int       `json:"version"`
-	Current               int64     `json:"current_bytes"`
-	Limit                 int64     `json:"limit_bytes"` // most restrictive visible limit; 0 means unlimited/unknown
-	AncestorCgroup        string    `json:"pressured_ancestor_cgroup,omitempty"`
-	AncestorCurrent       int64     `json:"pressured_ancestor_current_bytes"`
-	AncestorLimit         int64     `json:"pressured_ancestor_limit_bytes"`
-	File                  int64     `json:"file_bytes"`
-	Shmem                 int64     `json:"shmem_bytes"`
-	ActiveFile            int64     `json:"active_file_bytes"`
-	InactiveFile          int64     `json:"inactive_file_bytes"`
-	Anon                  int64     `json:"anon_bytes"`
-	Slab                  int64     `json:"slab_bytes"`
-	Dirty                 int64     `json:"dirty_bytes"`
-	Writeback             int64     `json:"writeback_bytes"`
-	IOBytes               int64     `json:"io_bytes"`
-	IOBytesPerSecond      float64   `json:"io_bytes_per_second"`
-	FileRefaults          int64     `json:"file_refaults"`
-	FileRefaultsPerSecond float64   `json:"file_refaults_per_second"`
-	FileRefaultsAvailable bool      `json:"file_refaults_available"`
-	FileRefaultRateValid  bool      `json:"file_refault_rate_valid"`
-	IOPSI                 *float64  `json:"io_psi_avg10"`
-	MemoryPSI             *float64  `json:"memory_psi_avg10"`
-	NodeAvailable         int64     `json:"host_memavailable_bytes"`
-	OOMKill               int64     `json:"oom_kill_total"`
-	RSS                   int64     `json:"self_rss_bytes"`
-	CPUSeconds            float64   `json:"self_cpu_seconds"`
-	CPUPercent            float64   `json:"self_cpu_percent"`
-	BusinessP99           *float64  `json:"business_p99_ms"`
-	BusinessPause         bool      `json:"business_pause"`
-	Error                 string    `json:"error,omitempty"`
+	Available             map[string]bool `json:"available_metrics,omitempty"`
+	Time                  time.Time       `json:"time"`
+	Cgroup                string          `json:"cgroup"`
+	Version               int             `json:"version"`
+	Current               int64           `json:"current_bytes"`
+	Limit                 int64           `json:"limit_bytes"` // most restrictive visible limit; 0 means unlimited/unknown
+	AncestorCgroup        string          `json:"pressured_ancestor_cgroup,omitempty"`
+	AncestorCurrent       int64           `json:"pressured_ancestor_current_bytes"`
+	AncestorLimit         int64           `json:"pressured_ancestor_limit_bytes"`
+	File                  int64           `json:"file_bytes"`
+	Shmem                 int64           `json:"shmem_bytes"`
+	ActiveFile            int64           `json:"active_file_bytes"`
+	InactiveFile          int64           `json:"inactive_file_bytes"`
+	Anon                  int64           `json:"anon_bytes"`
+	Slab                  int64           `json:"slab_bytes"`
+	Dirty                 int64           `json:"dirty_bytes"`
+	Writeback             int64           `json:"writeback_bytes"`
+	IOBytes               int64           `json:"io_bytes"`
+	IOBytesPerSecond      float64         `json:"io_bytes_per_second"`
+	FileRefaults          int64           `json:"file_refaults"`
+	FileRefaultsPerSecond float64         `json:"file_refaults_per_second"`
+	FileRefaultsAvailable bool            `json:"file_refaults_available"`
+	FileRefaultRateValid  bool            `json:"file_refault_rate_valid"`
+	IOPSI                 *float64        `json:"io_psi_avg10"`
+	MemoryPSI             *float64        `json:"memory_psi_avg10"`
+	NodeAvailable         int64           `json:"host_memavailable_bytes"`
+	OOMKill               int64           `json:"oom_kill_total"`
+	RSS                   int64           `json:"self_rss_bytes"`
+	CPUSeconds            float64         `json:"self_cpu_seconds"`
+	CPUPercent            float64         `json:"self_cpu_percent"`
+	BusinessP99           *float64        `json:"business_p99_ms"`
+	BusinessPause         bool            `json:"business_pause"`
+	Error                 string          `json:"error,omitempty"`
 }
 type Decision struct {
 	State       string `json:"state"`

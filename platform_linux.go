@@ -435,7 +435,10 @@ func (r *metricReader) sample(c Config) Metrics {
 		}
 		m.FileRefaults = s["workingset_refault_file"]
 		_, m.FileRefaultsAvailable = s["workingset_refault_file"]
-		m.OOMKill = values(filepath.Join(r.path, "memory.events"))["oom_kill"]
+		events := values(filepath.Join(r.path, "memory.events"))
+		m.OOMKill = events["oom_kill"]
+		m.Available = memoryAvailability(2, s)
+		_, m.Available["oom_kill_total"] = events["oom_kill"]
 	} else {
 		m.Version = 1
 		m.Current, e = number(filepath.Join(r.path, "memory.usage_in_bytes"))
@@ -453,6 +456,7 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Writeback = get("writeback")
 		m.ActiveFile = get("active_file")
 		m.InactiveFile = get("inactive_file")
+		m.Available = memoryAvailability(1, s)
 		if c.MaxFileRefaultsPerSecond > 0 {
 			m.Error = "configured file-refault guard requires cgroup v2"
 		}
@@ -461,6 +465,7 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Error = e.Error()
 		return m
 	}
+	m.Available["current_bytes"] = true
 	// Respect visible ancestors' limits; hidden ancestors are not observable.
 	if m.Version == 2 {
 		var ancestorRatio float64
@@ -484,6 +489,7 @@ func (r *metricReader) sample(c Config) Metrics {
 		}
 	}
 	b, ioErr := os.ReadFile(filepath.Join(r.path, "io.stat"))
+	m.Available["io_bytes"] = ioErr == nil
 	if ioErr == nil {
 		for _, l := range strings.Split(string(b), "\n") {
 			for _, v := range strings.Fields(l) {
@@ -498,19 +504,32 @@ func (r *metricReader) sample(c Config) Metrics {
 	}
 	m.IOPSI = psi(filepath.Join(r.path, "io.pressure"))
 	m.MemoryPSI = psi(filepath.Join(r.path, "memory.pressure"))
-	m.NodeAvailable = values("/proc/meminfo")["MemAvailable"] * 1024
+	node := values("/proc/meminfo")
+	m.NodeAvailable = node["MemAvailable"] * 1024
+	_, m.Available["host_memavailable_bytes"] = node["MemAvailable"]
 	self := values("/proc/self/status")
 	m.RSS = self["VmRSS"] * 1024
+	_, m.Available["self_rss_bytes"] = self["VmRSS"]
 	var ru syscall.Rusage
 	if syscall.Getrusage(syscall.RUSAGE_SELF, &ru) == nil {
+		m.Available["self_cpu_seconds"] = true
 		m.CPUSeconds = float64(ru.Utime.Sec+ru.Stime.Sec) + float64(ru.Utime.Usec+ru.Stime.Usec)/1e6
 	}
 	dt := m.Time.Sub(r.previous.Time).Seconds()
 	if !r.previous.Time.IsZero() && dt > 0 {
 		m.IOBytesPerSecond = float64(max64(0, m.IOBytes-r.previous.IOBytes)) / dt
 		m.CPUPercent = (m.CPUSeconds - r.previous.CPUSeconds) / dt * 100
+		if r.previous.Error == "" && r.previous.Cgroup == m.Cgroup {
+			m.Available["io_bytes_per_second"] = m.Available["io_bytes"] && r.previous.Available["io_bytes"] && m.IOBytes >= r.previous.IOBytes
+			m.Available["self_cpu_percent"] = m.Available["self_cpu_seconds"] && r.previous.Available["self_cpu_seconds"] && m.CPUSeconds >= r.previous.CPUSeconds
+		}
 	}
 	setRefaultRate(&m, r.previous)
+	m.Available["limit_bytes"] = m.Limit > 0
+	m.Available["file_refaults"] = m.FileRefaultsAvailable
+	m.Available["file_refaults_per_second"] = m.FileRefaultRateValid
+	m.Available["io_psi_avg10"] = m.IOPSI != nil
+	m.Available["memory_psi_avg10"] = m.MemoryPSI != nil
 	r.previous = m
 	return m
 }

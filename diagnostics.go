@@ -22,6 +22,10 @@ func diagnose(c Config, m Metrics, d Decision) Diagnostics {
 		add("metrics_unavailable", "指标缺失或不可用，不能据此判断内存构成是否安全；先核对cgroup和采集状态。")
 		return x
 	}
+	if m.Available != nil && (!m.Available["current_bytes"] || !m.Available["file_bytes"] || !m.Available["shmem_bytes"]) {
+		add("memory_breakdown_incomplete", "缺少文件页或共享内存分类，无法可靠估算普通文件页与其它计费用量；已知指标仍可单独查看。")
+		return x
+	}
 	x.Valid = true
 	x.OrdinaryFileBytes = max64(0, m.File-m.Shmem)
 	x.OtherChargedBytes = max64(0, m.Current-x.OrdinaryFileBytes)

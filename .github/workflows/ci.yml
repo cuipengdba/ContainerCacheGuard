@@ -53,6 +53,11 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/test-web.cjs | tee web-results.json
+      - name: Snapshot exporter encoding cost
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -run '^$' -bench '^BenchmarkPrometheusSnapshot$' -benchtime=1000x -benchmem | tee metrics-benchmark-results.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

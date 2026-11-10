@@ -133,3 +133,7 @@ v2读取可见祖先的有限额与对应`memory.current`，记录占用比例�
 状态目录包含进程号、路径及资源指标，默认只允许相同 UID 访问。每个状态文件有进程锁；它不能检测两个不同容器使用不同状态文件却管理同一个 inode 的情况，部署时必须保证同一范围只有一个治理者。
 
 Web 页面和 `/api/v1/status`、`/api/v1/history` 均为只读，不提供开关回收、修改配置或执行系统命令的接口。状态包含路径及 cgroup 标识；默认只绑定回环地址。服务端限制并发请求数，设有读取/写入超时；`web_history_samples` 限制历史内存。页面的“普通文件缓存”按 `max(0,file-shmem)` 估算，`active_file`/`inactive_file` 是内核 LRU 分类，不等于逐文件的精确冷热判定。
+
+## rc.9只读监控接口
+
+复用web_listen/web_token_file；无新增必填配置。`/healthz`表示CCG HTTP响应，`/readyz`表示数据新鲜有效，`/metrics`是Prometheus文本格式。数据新鲜窗口为max(3倍采样周期,1秒)，未来超过1秒的状态/指标时间拒绝；指标有误或过期时资源值和工作计数省略，不补零。`available_metrics`描述字段可采集性，需同时确认整个样本无error。状态新增`web_address`记录实际监听地址，尤其适用于端口0；不会自动设置节点转发。详细指标、认证、四实例抓取及业务Pod探针边界见[监控说明](MONITORING.zh.md)。

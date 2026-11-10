@@ -3,7 +3,7 @@
 Never calls global drop_caches or changes cgroup settings. Requires readable
 memory cgroup and an ext4/xfs/btrfs/overlay/f2fs temporary directory.
 """
-import argparse, datetime, hashlib, json, os, pathlib, signal, subprocess, tempfile, time
+import argparse, datetime, hashlib, json, os, pathlib, re, signal, subprocess, tempfile, time, urllib.request
 
 def run(args):
     r=subprocess.run(list(map(str,args)),capture_output=True,text=True,timeout=120)
@@ -27,13 +27,24 @@ def main():
                 for _ in range(64):out.write(body)
                 out.flush();os.fsync(out.fileno())
         digest=hashlib.sha256(file.read_bytes()).hexdigest()
-        cfg=json.loads(run([binary,'init-config','--mode','paths','--path',data]));cfg.update(action='enforce',trigger='always',warmup_seconds=0,protect_seconds=1,min_file_age_seconds=0,recheck_seconds=1,cooldown_seconds=3,interval_ms=100,log_interval_seconds=1,worker_budget_ms=50,max_cpu_percent=50,max_dirty_bytes=1<<40,max_io_psi_avg10=0,initial_reclaim_bytes_per_second=16<<20,reclaim_bytes_per_second=32<<20,exclude_paths=[str(protected)],state_file=str(w/'run/status.json'))
+        cfg=json.loads(run([binary,'init-config','--mode','paths','--path',data]));cfg.update(web_listen='127.0.0.1:0',action='enforce',trigger='always',warmup_seconds=0,protect_seconds=1,min_file_age_seconds=0,recheck_seconds=1,cooldown_seconds=3,interval_ms=100,log_interval_seconds=1,worker_budget_ms=50,max_cpu_percent=50,max_dirty_bytes=1<<40,max_io_psi_avg10=0,initial_reclaim_bytes_per_second=16<<20,reclaim_bytes_per_second=32<<20,exclude_paths=[str(protected)],state_file=str(w/'run/status.json'))
         config=w/'config.json';config.write_text(json.dumps(cfg));doctor=json.loads(run([binary,'doctor','--config',config]));checks.append('doctor_real_cgroup')
         initial=json.loads(run([binary,'scan','--path',file]))
         log=(w/'daemon.log').open('w');p=subprocess.Popen([binary,'run','--config',str(config)],stdout=log,stderr=subprocess.STDOUT)
         try:
             state=w/'run/status.json';s=wait_state(state,lambda s:s['counters']['observed_net_reduction_bytes']>=16<<20);checks.append('enforce_measured_reduction')
             os.kill(p.pid,signal.SIGUSR1);wait_state(state,lambda s:s['decision']['state']=='SUSPENDED');time.sleep(.3);s=json.loads(state.read_text());n=s['counters']['advice_bytes'];time.sleep(1.5);s=json.loads(state.read_text());assert s['counters']['advice_bytes']==n;checks.append('pause_stops_advice')
+            base='http://'+s['web_address']
+            for route in ['/healthz','/readyz','/metrics']:
+                with urllib.request.urlopen(base+route,timeout=3) as response:
+                    assert response.status==200
+                    if route=='/metrics':exposition=response.read().decode()
+            checks.append('web_monitoring_endpoints')
+            assert 'ccg_paused 1\n' in exposition and 'ccg_advice_allowed 0\n' in exposition and 'ccg_monitoring_ready 1\n' in exposition
+            checks.append('paused_monitoring_stays_ready')
+            current=re.search(r'^ccg_memory_current_bytes ([0-9.eE+-]+)$',exposition,re.M)
+            assert current and float(current.group(1))>0 and s['metrics']['available_metrics']['current_bytes']
+            checks.append('prometheus_snapshot_has_real_cgroup_values')
             second=subprocess.run([binary,'run','--config',str(config),'--duration','1s'],capture_output=True,text=True,timeout=10);assert second.returncode!=0 and 'another daemon' in second.stderr;checks.append('duplicate_instance_rejected')
             hot=json.loads(run([binary,'scan','--path',protected]));assert hot['Resident']>=60<<20;checks.append('excluded_file_stays_resident')
             os.kill(p.pid,signal.SIGUSR2);wait_state(state,lambda s:not s['paused']);checks.append('resume')

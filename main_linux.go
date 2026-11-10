@@ -223,6 +223,7 @@ type Status struct {
 	Mode              string         `json:"mode"`
 	Action            string         `json:"action"`
 	IntervalMS        int            `json:"sample_interval_ms"`
+	WebAddress        string         `json:"web_address,omitempty"`
 	Decision          Decision       `json:"decision"`
 	Metrics           Metrics        `json:"metrics"`
 	Counters          Counters       `json:"counters"`
@@ -335,6 +336,9 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 	}()
 	started := time.Now()
 	s := Status{Time: started, Version: version, PID: os.Getpid(), Mode: c.Mode, Action: c.Action, Roots: roots, IntervalMS: c.IntervalMS}
+	if web != nil {
+		s.WebAddress = web.listen.Addr().String()
+	}
 	m := r.sample(c)
 	oomBaseline := m.OOMKill
 	lastLog := time.Time{}

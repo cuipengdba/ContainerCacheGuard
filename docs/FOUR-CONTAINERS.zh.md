@@ -2,6 +2,10 @@
 
 本页给运维人员一条可检查的接入路线。ContainerCacheGuard（下称 CCG）是常驻进程，不替代 PostgreSQL、DBS 或 `pg_basebackup`。当前94迁移与验证目标为 **PostgreSQL 14.19**；下列配置仍是接入设计，尚未表示四容器已在94完成部署与验收。
 
+## rc.9监控四个实例
+
+沿用每个实例的只读Web监听和认证，读取metrics/healthz/readyz；无需额外扫描PGDATA。[接入说明](MONITORING.zh.md)和[Prometheus例子](../deploy/prometheus.example.yml)记录目标标签、字段可用性和口径。**不要把CCG健康失败用作同一DBS业务容器的liveness条件，也不要因sidecar监测暂不可用就让数据库Pod整体不就绪。** 本轮只交付接口和示例，没有在94自动安装Prometheus或更改Pod探针。
+
 ## rc.7接入已有容器时怎么升级
 
 下载对应架构的[候选版本](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.7)，核对SHA256，保留旧程序和配置。配置无需新增必填字段，但事件发现会占用总发现额度的25%，应重测大目录覆盖速度；refault保护启用后，初始基线未知时会暂停。先用独立状态目录与`observe`运行，核对业务容器/备份容器的cgroup和授权路径；同一范围不能同时运行两个`enforce`实例。确认后由既有进程管理方式受控替换CCG，不通过重启PostgreSQL来更换CCG。异常时暂停新CCG，恢复旧程序和配置。此说明是升级方法，**不表示94四容器已换成rc.7或已通过验收**。
