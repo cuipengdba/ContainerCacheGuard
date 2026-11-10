@@ -1,5 +1,8 @@
 # DBS / HISDBS 首次双组件接入实测（2026-11-10）
 
+> 同日后续升级已替换本页旧版本/统一percent/HTTP配置；当前配置和实测见[升级记录](deployment-dbs-hisdbs-upgrade-20261110.zh.md)。本页保留首次接入历史。
+
+
 > 版本提示：本页保留当时rc.9部署事实；rc.11按后续需求取消Web/HTTP服务，旧页面配置不再生效，当前接入见[日志与状态监控](MONITORING.zh.md)。
 
 本次在既有 Kubernetes/containerd 业务容器内接入 **ContainerResourceGuard v0.1.0-rc.2** 和 **ContainerCacheGuard 0.2.0-rc.9**。使用当日最新已发布候选版本，没有把 main 的未发布开发功能当成发布版。两容器已逐个重建，SQL 和业务 `/test` 恢复正常；CRG 的 CPU、内存、IO 写入后回读均成功。本页是部署短测记录，不是长期性能、全量数据校验或备份恢复验收。

@@ -1,0 +1,18 @@
+[
+  {
+    "role": "dbs",
+    "start": 1794317373.408148,
+    "database_stopped": 1794317390.0558798,
+    "ready": 1794317471.4269972,
+    "old_container_id": "d4a74e1a30af4d08459c1cbaa7bf65284aac710409aadda62beb6e866d7f76d9",
+    "new_container_id": "2fbe9d78fad6d68cd33781cf32ad500877c13ff9e09fd5fc89288fffb8949c66"
+  },
+  {
+    "role": "hisdbs",
+    "start": 1794317514.4070835,
+    "database_stopped": 1794317517.3076236,
+    "ready": 1794317544.700092,
+    "old_container_id": "06a207c96a9b0df8b296a166d57c2253fd68342a06b6fd7a871ca4f13cf1243c",
+    "new_container_id": "9232ebc73c4fe18c2a8083c6a2e778190bdac82985677a3d958c1ad667bd64f9"
+  }
+]

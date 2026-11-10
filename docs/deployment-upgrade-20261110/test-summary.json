@@ -1,0 +1,349 @@
+{
+  "date": "2026-11-10",
+  "timezone": "Asia/Shanghai",
+  "node_label": "171",
+  "versions": {
+    "crg": "v0.1.0-rc.3-preview.1",
+    "ccg": "0.2.0-rc.11"
+  },
+  "release_kind": "engineering preview / release candidate, not stable acceptance",
+  "host_memory_bytes": 66414546944,
+  "host_online_cpus": 28,
+  "parent_memory_max_bytes": 55677128704,
+  "evidence_time_server": "2026-11-10 21:41:43",
+  "clock_offset_estimate_seconds": 99.00057291984558,
+  "containers": {
+    "dbs": {
+      "crg_percentages": {
+        "cpu_percent": 35,
+        "memory_percent": 45,
+        "io_percent": 60
+      },
+      "cpu_cores": 9.8,
+      "memory_GiB": 27.834014892578125,
+      "actual": {
+        "cpu.max": "980000 100000",
+        "memory.max": "29886545920",
+        "io.max": "253:0 rbps=2307275406 wbps=2714778981 riops=20100 wiops=19672",
+        "memory.current": "10002964480",
+        "memory.peak": "12512690176",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+      },
+      "crg_state": "managed",
+      "crg_items": [
+        {
+          "file": "cpu.max",
+          "value": "980000 100000",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "memory.max",
+          "value": "29886545920",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "io.max",
+          "device": "253:0",
+          "device_identity": "f6511f6b6da7fc3dfe55193dfb4cc767b0468cdfaa61e788551312beee43a980",
+          "value": "rbps=2307275406 wbps=2714778981 riops=20100 wiops=19672",
+          "state": "applied",
+          "detail": "already at desired value"
+        }
+      ],
+      "automatic_io": {
+        "state": "reused",
+        "detail": "matching stable device identity; no benchmark performed",
+        "profile": "/opt/guards-runtime/io-profile.json"
+      },
+      "ccg_version": "0.2.0-rc.11",
+      "ccg_mode": "auto",
+      "ccg_action": "enforce",
+      "ccg_decision": {
+        "state": "CONTROL",
+        "reason": "cache_budget_exceeded",
+        "allow": true,
+        "cache_target_bytes": 2147483648
+      },
+      "ccg_protection": {
+        "ready": true,
+        "missing_metrics": [],
+        "disabled_guards": [
+          "io_bytes_per_second",
+          "io_psi_avg10",
+          "file_refaults_per_second",
+          "host_memavailable_bytes",
+          "business_p99_ms"
+        ],
+        "unsupported_guards": []
+      },
+      "ccg_degraded": [
+        "io_PSI_unavailable",
+        "memory_PSI_unavailable",
+        "no_kubelet_summary",
+        "application_heap_shmem_slab_not_reclaimed"
+      ],
+      "ccg_counters": {
+        "indexed_files": 17434,
+        "pending_directories": 12,
+        "advice_bytes": 1806336,
+        "observed_net_reduction_bytes": 315392,
+        "completed_inventory_sweeps": 0,
+        "errors": 0,
+        "last_error": null,
+        "inventory_overflow": 1443,
+        "hint_overflows": 20533,
+        "hint_queue_dropped": 0
+      },
+      "ccg_web_service_enabled": false,
+      "ccg_process_tcp_listeners": [],
+      "hashes": {
+        "crg": "f07973272313db26d359797dda4665145f7dd6490bac2a55f9084bd367faf361",
+        "ccg": "7ab4ae462235c4419ab967189a1d27bb4c515928b63e93502df841882f44617f"
+      },
+      "runtime_log_files": {
+        "crg": {
+          "directory": "/opt/container-guards171/runtime/dbs/crg-logs",
+          "files": [
+            {
+              "name": ".crg-logs.lock",
+              "bytes": 0
+            },
+            {
+              "name": "crg-2026-11-10.log",
+              "bytes": 2263
+            }
+          ]
+        },
+        "ccg": {
+          "directory": "/opt/container-guards171/runtime/dbs/ccg-logs",
+          "files": [
+            {
+              "name": ".writer.lock",
+              "bytes": 0
+            },
+            {
+              "name": "containercacheguard-2026-11-10.log",
+              "bytes": 356076
+            }
+          ]
+        }
+      },
+      "data_catalog_comparison": {
+        "system_id": true,
+        "databases": true,
+        "relations": true,
+        "namespaces": true
+      },
+      "postgres_settings": {
+        "shared_buffers": "8960MB",
+        "maintenance_work_mem": "2GB",
+        "autovacuum_work_mem": "1GB",
+        "work_mem": "2293kB",
+        "max_connections": "1000"
+      },
+      "sql_probe_ms": 2796.1849635466933,
+      "api": {
+        "code": 200,
+        "body": {
+          "Result": "000",
+          "Reason": ""
+        },
+        "probe_ms": 11.2434858456254
+      },
+      "planned_restart": {
+        "start": "2026-11-10 21:29:33",
+        "database_stopped": "2026-11-10 21:29:50",
+        "ready": "2026-11-10 21:31:11"
+      },
+      "old_container_id": "d4a74e1a30af4d08459c1cbaa7bf65284aac710409aadda62beb6e866d7f76d9",
+      "new_container_id": "2fbe9d78fad6d68cd33781cf32ad500877c13ff9e09fd5fc89288fffb8949c66",
+      "stable_probes": {
+        "sql": {
+          "samples": 12,
+          "failures": 0
+        },
+        "api": {
+          "samples": 12,
+          "failures": 0
+        },
+        "window": [
+          "2026-11-10 21:31:48",
+          "2026-11-10 21:42:27"
+        ]
+      }
+    },
+    "hisdbs": {
+      "crg_percentages": {
+        "cpu_percent": 35,
+        "memory_percent": 25,
+        "io_percent": 60
+      },
+      "cpu_cores": 9.8,
+      "memory_GiB": 15.463340759277344,
+      "actual": {
+        "cpu.max": "980000 100000",
+        "memory.max": "16603635712",
+        "io.max": "253:0 rbps=2307275406 wbps=2714778981 riops=20100 wiops=19672",
+        "memory.current": "2137923584",
+        "memory.peak": "2159464448",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+      },
+      "crg_state": "managed",
+      "crg_items": [
+        {
+          "file": "cpu.max",
+          "value": "980000 100000",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "memory.max",
+          "value": "16603635712",
+          "state": "applied",
+          "detail": "already at desired value"
+        },
+        {
+          "file": "io.max",
+          "device": "253:0",
+          "device_identity": "f6511f6b6da7fc3dfe55193dfb4cc767b0468cdfaa61e788551312beee43a980",
+          "value": "rbps=2307275406 wbps=2714778981 riops=20100 wiops=19672",
+          "state": "applied",
+          "detail": "already at desired value"
+        }
+      ],
+      "automatic_io": {
+        "state": "reused",
+        "detail": "matching stable device identity; no benchmark performed",
+        "profile": "/opt/guards-runtime/io-profile.json"
+      },
+      "ccg_version": "0.2.0-rc.11",
+      "ccg_mode": "auto",
+      "ccg_action": "enforce",
+      "ccg_decision": {
+        "state": "IDLE",
+        "reason": "below_cache_target",
+        "allow": false,
+        "cache_target_bytes": 2147483648
+      },
+      "ccg_protection": {
+        "ready": true,
+        "missing_metrics": [],
+        "disabled_guards": [
+          "io_bytes_per_second",
+          "io_psi_avg10",
+          "file_refaults_per_second",
+          "host_memavailable_bytes",
+          "business_p99_ms"
+        ],
+        "unsupported_guards": []
+      },
+      "ccg_degraded": [
+        "io_PSI_unavailable",
+        "memory_PSI_unavailable",
+        "no_kubelet_summary",
+        "application_heap_shmem_slab_not_reclaimed"
+      ],
+      "ccg_counters": {
+        "indexed_files": 17,
+        "pending_directories": 3804,
+        "advice_bytes": 0,
+        "observed_net_reduction_bytes": 0,
+        "completed_inventory_sweeps": 0,
+        "errors": 0,
+        "last_error": null,
+        "inventory_overflow": 1443,
+        "hint_overflows": 20458,
+        "hint_queue_dropped": 0
+      },
+      "ccg_web_service_enabled": false,
+      "ccg_process_tcp_listeners": [],
+      "hashes": {
+        "crg": "f07973272313db26d359797dda4665145f7dd6490bac2a55f9084bd367faf361",
+        "ccg": "7ab4ae462235c4419ab967189a1d27bb4c515928b63e93502df841882f44617f"
+      },
+      "runtime_log_files": {
+        "crg": {
+          "directory": "/opt/container-guards171/runtime/hisdbs/crg-logs",
+          "files": [
+            {
+              "name": ".crg-logs.lock",
+              "bytes": 0
+            },
+            {
+              "name": "crg-2026-11-10.log",
+              "bytes": 2171
+            }
+          ]
+        },
+        "ccg": {
+          "directory": "/opt/container-guards171/runtime/hisdbs/ccg-logs",
+          "files": [
+            {
+              "name": ".writer.lock",
+              "bytes": 0
+            },
+            {
+              "name": "containercacheguard-2026-11-10.log",
+              "bytes": 281897
+            }
+          ]
+        }
+      },
+      "data_catalog_comparison": {
+        "system_id": true,
+        "databases": true,
+        "relations": true,
+        "namespaces": true
+      },
+      "postgres_settings": {
+        "shared_buffers": "8960MB",
+        "maintenance_work_mem": "2GB",
+        "autovacuum_work_mem": "1GB",
+        "work_mem": "2293kB",
+        "max_connections": "1000"
+      },
+      "sql_probe_ms": 331.2037978321314,
+      "api": {
+        "code": 200,
+        "body": {
+          "Result": "000",
+          "Reason": ""
+        },
+        "probe_ms": 8.326927199959755
+      },
+      "planned_restart": {
+        "start": "2026-11-10 21:31:54",
+        "database_stopped": "2026-11-10 21:31:57",
+        "ready": "2026-11-10 21:32:24"
+      },
+      "old_container_id": "06a207c96a9b0df8b296a166d57c2253fd68342a06b6fd7a871ca4f13cf1243c",
+      "new_container_id": "9232ebc73c4fe18c2a8083c6a2e778190bdac82985677a3d958c1ad667bd64f9",
+      "stable_probes": {
+        "sql": {
+          "samples": 11,
+          "failures": 0
+        },
+        "api": {
+          "samples": 11,
+          "failures": 0
+        },
+        "window": [
+          "2026-11-10 21:32:48",
+          "2026-11-10 21:42:27"
+        ]
+      }
+    }
+  },
+  "limitations": [
+    "Short deployment smoke check, not a one-hour stable-period or long-term performance acceptance",
+    "No full-table checksum or backup/restore test",
+    "No additional backup containers",
+    "PSI unavailable; optional IO PSI gate explicitly disabled",
+    "Existing vendor cache cleaning retained; CCG effect is not isolated",
+    "Inventory/hint capacity overflow means coverage is partial",
+    "Fresh container OOM counters do not erase the old DBS OOM kill",
+    "IO profile is method-specific, and reusing it is not a new disk saturation benchmark"
+  ]
+}

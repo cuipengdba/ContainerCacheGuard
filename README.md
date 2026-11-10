@@ -1,5 +1,8 @@
 # ContainerCacheGuard
 
+[171节点DBS/HISDBS本次升级、最终百分比与实测记录](docs/deployment-dbs-hisdbs-upgrade-20261110.zh.md)：CRG rc.3-preview.1 + CCG rc.11，DBS 35/45/60、HISDBS 35/25/60，CCG auto/enforce。
+
+
 [![版本](https://img.shields.io/github/v/release/cuipengdba/ContainerCacheGuard?include_prereleases&sort=semver&cacheSeconds=60&label=version&color=blue)](https://github.com/cuipengdba/ContainerCacheGuard/releases)
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。

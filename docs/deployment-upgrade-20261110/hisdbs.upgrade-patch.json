@@ -1,0 +1,45 @@
+{
+  "spec": {
+    "strategy": {
+      "type": "Recreate",
+      "rollingUpdate": null
+    },
+    "template": {
+      "metadata": {
+        "annotations": {
+          "guards171/version": "20261110-preview1-rc11"
+        }
+      },
+      "spec": {
+        "volumes": [
+          {
+            "name": "container-guards",
+            "hostPath": {
+              "path": "/opt/container-guards171/upgrade-20261110/hisdbs",
+              "type": "Directory"
+            }
+          },
+          {
+            "name": "container-guards-runtime",
+            "hostPath": {
+              "path": "/opt/container-guards171/runtime/hisdbs",
+              "type": "Directory"
+            }
+          }
+        ],
+        "containers": [
+          {
+            "name": "hisdbs",
+            "volumeMounts": [
+              {
+                "name": "container-guards-runtime",
+                "mountPath": "/opt/guards-runtime",
+                "readOnly": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
