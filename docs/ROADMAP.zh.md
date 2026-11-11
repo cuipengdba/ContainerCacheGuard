@@ -58,3 +58,7 @@
 用户批准开发到候选发布。显式受限输出、真实kubelet信号、身份隔离及离线SVG见[新手册](RC13-USAGE.zh.md)和[交付边界](RC13-DELIVERY.zh.md)。真实PG14配对、源端效果与48小时仍未通过；Web继续取消，视频和长期方案仍暂停。
 
 rc.13候选已完成发布：https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13。最终462ebd1，CI42956004282，两架构各82项race顶层单测/37项CLI/3项采集器通过，6附件核验。真实业务配对和48小时仍未通过；详见RC13-DELIVERY.zh.md。
+
+## 后续两版已交付：rc.14 / rc.15
+
+C034已完成信号加固/到期许可和有覆盖检查的缓存对比，源码、双架构静态候选及详细中文手册已推送GitHub；实际86/93项race、39/43项CLI和现场未验收边界见[最终交付](RC14-RC15-DELIVERY.zh.md)。本轮未连接171/94，不更改匿名内存/容量验收结论。

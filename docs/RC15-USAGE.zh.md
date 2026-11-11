@@ -31,7 +31,7 @@ containercacheguard compare --baseline /reports/baseline.json \
 | business_covered_seconds / node_covered_seconds | 两端样本都有效、就绪和可解释的业务/节点区间秒数；节点区间还要求同一UID |
 | business_source_ids / node_ids | 有效样本出现的探针来源和节点UID；缺失不会编造 |
 
-文件、CPU时间积分按本地小时切分；跨小时IO字节整体归到区间结束的小时，秒数按小时拆分，必须**先合计字节和秒再求速率**，不要用单小时IO字节/秒推断精确小时速率。超过max-gap、重启/run_id变化、cgroup变化、乱序、无效指标均不补算。只有一端有效不计覆盖。时间积分是采样估计，不能代表连续真实峰值或严格因果收益。report不带from/until仍可供人阅读，但compare会要求明确窗口。
+文件、CPU时间积分按本地小时切分；跨小时IO字节整体归到区间结束的小时，秒数按小时拆分，必须**先合计字节和秒再求速率**，不要用单小时IO字节/秒推断精确小时速率。超过max-gap、重启/run_id变化、cgroup变化、乱序、无效指标均不补算。只有一端有效不计覆盖。时间积分和覆盖均是端点衔接估计，不能证明间隔内持续健康，不能代表连续真实峰值或严格因果收益。试验必须固定相同日志频率与max-gap；不得通过放大max-gap人为提高覆盖。当前compare不自动核验两份报告的日志频率/max-gap完全一致，操作者须查看原报告元数据并另行审计。report不带from/until仍可供人阅读，但compare会要求明确窗口。
 
 ## compare先查证据，再查门槛
 
