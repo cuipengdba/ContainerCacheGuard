@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -219,7 +220,7 @@ func compareReport(r OfflineReport) (map[string]*CompareSummary, error) {
 	}
 	for _, x := range subjects {
 		for k, v := range map[string]float64{"file": x.fileSeconds, "cpu": x.cpuSeconds, "io": x.ioSeconds, "business": x.businessSeconds, "node": x.nodeSeconds} {
-			if !finiteNonnegative(v) || v > seconds+.001 {
+			if !finiteNonnegative(v) || v > seconds+math.Max(1e-12, seconds*1e-9) {
 				return nil, errors.New("累计覆盖超出窗口（可能重复容器/分组）")
 			}
 			x.Coverage[k] = v / seconds
@@ -237,6 +238,11 @@ func compareReport(r OfflineReport) (map[string]*CompareSummary, error) {
 		x.FileAverage = ratio(x.fileIntegral, x.fileSeconds)
 		x.CPUAverage = ratio(x.cpuIntegral, x.cpuSeconds)
 		x.IOAverage = ratio(x.ioBytes, x.ioSeconds)
+		for _, v := range []*float64{x.FileAverage, x.CPUAverage, x.IOAverage} {
+			if v != nil && !finiteNonnegative(*v) {
+				return nil, errors.New("统计均值溢出")
+			}
+		}
 	}
 	return subjects, nil
 }
@@ -319,6 +325,9 @@ func compareTelemetry(base, candidate OfflineReport, l CompareLimits) (Compariso
 			if len(row.Reasons) == 0 {
 				row.Status = "telemetry_thresholds_met"
 				check := func(name string, value *float64, limit float64, minimum bool) {
+					if value != nil && (math.IsInf(*value, 0) || math.IsNaN(*value)) {
+						value = nil
+					}
 					state := "met"
 					if value == nil || minimum && *value < limit || !minimum && *value > limit {
 						state = "exceeded"
@@ -421,7 +430,7 @@ func compareCommand(args []string) error {
 		for _, row := range result.Rows {
 			s.WriteString("\n" + markdownCell(row.InstanceID) + "：\n\n| 指标 | 值 | 门槛 | 结果 |\n| --- | ---: | ---: | --- |\n")
 			for _, check := range row.Checks {
-				v := "未定义（基线为0）"
+				v := "未定义（零基线或比例溢出）"
 				if check.Value != nil {
 					v = fmt.Sprintf("%.3f", *check.Value)
 				}

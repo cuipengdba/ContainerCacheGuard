@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -52,6 +53,39 @@ func comparisonFixture(t *testing.T, action string, file int64) OfflineReport {
 		t.Fatal(e)
 	}
 	return r
+}
+
+func TestCompareOverflowZeroBaselineAndOverlappingWindowsAreExplicit(t *testing.T) {
+	base, candidate := comparisonFixture(t, "observe", 100*MiB), comparisonFixture(t, "enforce", 50*MiB)
+	base.Hours[0].IOBytesDelta = 0
+	r, e := compareTelemetry(base, candidate, defaultCompareLimits())
+	if e != nil || r.Status != "threshold_exceeded" {
+		t.Fatalf("zero IO baseline: %+v %v", r, e)
+	}
+	v := 1e-300
+	base.Hours[0].BusinessP99Peak = &v
+	v2 := 1e300
+	candidate.Hours[0].BusinessP99Peak = &v2
+	r, e = compareTelemetry(base, candidate, defaultCompareLimits())
+	if e != nil || r.Status != "threshold_exceeded" {
+		t.Fatal(e, r)
+	}
+	if _, e = json.Marshal(r); e != nil {
+		t.Fatal("nonfinite result escaped", e)
+	}
+	candidate.Hours[0].FileByteSeconds = 1e308
+	candidate.Hours[0].FileCoveredSeconds = 1e-9
+	if _, e = compareTelemetry(base, candidate, defaultCompareLimits()); e == nil {
+		t.Fatal("mean overflow accepted")
+	}
+	base, candidate = comparisonFixture(t, "observe", 100*MiB), comparisonFixture(t, "enforce", 50*MiB)
+	candidate.WindowStart = base.WindowStart
+	candidate.WindowEnd = base.WindowEnd
+	candidate.Hours[0].Hour = base.Hours[0].Hour
+	r, e = compareTelemetry(base, candidate, defaultCompareLimits())
+	if e != nil || r.Status != "insufficient_evidence" {
+		t.Fatal("overlap accepted", e, r)
+	}
 }
 func TestCoverageSplitsHoursAndDoesNotInventMissingTime(t *testing.T) {
 	a := reportTestAggregator(t)
