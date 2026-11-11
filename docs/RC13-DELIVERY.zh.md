@@ -24,3 +24,18 @@
 新增测试验证配置约束、缺PSI显式选择、替代输入缺失拒绝、节点压力/水位/PSI可见时退让、信号时钟/来源/过期、真实临时文件上建议停止与恢复且内容一致、随机身份、跨运行/inode断开计数、多容器清单隔离、SVG转义和XML、采集器Quantity/百分比/soft宽限规范化。模拟指标夹具只在内部测试工厂可用，CLI仍强制真实cgroup。
 
 这些测试不能证明生产磁盘延迟、完整业务p99、内核所有页大小、任意权限组合或零驱逐。特别是停止CCG不会自动停止外部备份，临界风险下仍需外部业务止损与容量管理。
+
+## 最终原生回归和公开附件
+
+已公开[rc.13候选](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13)，标签/构建提交`462ebd1e5c891931095ade18d3ede830f66a9e55`，最终[双架构原生CI](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/42956004282)。中间成功构建保留历史，发布仅使用本次最终提交和附件。
+
+| 架构 | 顶层race单测 | CLI | 采集器规范化 | 页大小 | 静态程序大小 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| amd64 | 82通过，0跳过 | 37通过 | 3通过 | 4096 B | 4100256 B |
+| arm64 | 82通过，0跳过 | 37通过 | 3通过 | 4096 B | 3932320 B |
+
+6附件（两架构程序、SHA256SUMS、TEST-RESULTS.json、中文说明、LICENSE）的服务端SHA256/大小与本地一致，标签指向构建提交；程序无INTERP/DYNAMIC，源码构建标记干净，不含HTTP依赖，实际CLI进程无TCP监听。上述是原生Linux回归，不是CentOS7或ARM64 64KiB页的现场验收。
+
+节点适配器补充现场检查：在94通过只读SSH获取实时Node/Summary/configz，**本地**用发布源码的规范化器校验通过；采样时间2026-11-11T04:01:53Z，获取后1.15秒，memory.available=6820466688 B，hard=1073741824 B，soft=0，MemoryPressure=false。没有写入94信号文件或安装采集器，没有核验真实业务p99。这证明适配器能处理实际响应，不证明受限策略的缓存/延迟效果。
+
+私有原始证据保存在`E:\dbyouhua\deliverables\ContainerCacheGuard-v0.2.0-rc.13`；公开机器可读结果见Release附件TEST-RESULTS.json。不把另一个会话的171现场变更归为本轮行为；本轮未连接或修改171，保留了远端并行文档提交。

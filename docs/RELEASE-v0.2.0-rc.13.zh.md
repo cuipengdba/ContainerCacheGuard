@@ -11,3 +11,14 @@
 [详细使用说明](RC13-USAGE.zh.md)和[交付证据/未验收项](RC13-DELIVERY.zh.md)。原生双架构race/CLI及静态附件以本次发布附TEST-RESULTS.json为准。
 
 94本轮只读确认Kubelet1.26.12、cgroup v2、约30GiB且PSI仍不可用；实际hard memory.available=1Gi。没有修改171，没有在94替换程序/启用PSI/重启数据库/恢复旧压力。完整匹配的真实PG14输出端对照、两库完整备份校验恢复和48小时仍未通过。能力发布与业务验收分开，实验策略不覆盖源PGDATA、匿名内存尖峰及磁盘/PID压力，不自动停止外部备份。
+
+## 最终原生回归和公开附件
+
+已公开[rc.13候选](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13)，标签/构建提交`462ebd1e5c891931095ade18d3ede830f66a9e55`，最终[双架构原生CI](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/42956004282)。中间成功构建保留历史，发布仅使用本次最终提交和附件。
+
+| 架构 | 顶层race单测 | CLI | 采集器规范化 | 页大小 | 静态程序大小 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| amd64 | 82通过，0跳过 | 37通过 | 3通过 | 4096 B | 4100256 B |
+| arm64 | 82通过，0跳过 | 37通过 | 3通过 | 4096 B | 3932320 B |
+
+6附件（两架构程序、SHA256SUMS、TEST-RESULTS.json、中文说明、LICENSE）的服务端SHA256/大小与本地一致，标签指向构建提交；程序无INTERP/DYNAMIC，源码构建标记干净，不含HTTP依赖，实际CLI进程无TCP监听。上述是原生Linux回归，不是CentOS7或ARM64 64KiB页的现场验收。

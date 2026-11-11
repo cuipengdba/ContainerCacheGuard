@@ -56,3 +56,5 @@
 ## 2026-11-11：rc.13开发
 
 用户批准开发到候选发布。显式受限输出、真实kubelet信号、身份隔离及离线SVG见[新手册](RC13-USAGE.zh.md)和[交付边界](RC13-DELIVERY.zh.md)。真实PG14配对、源端效果与48小时仍未通过；Web继续取消，视频和长期方案仍暂停。
+
+rc.13候选已完成发布：https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13。最终462ebd1，CI42956004282，两架构各82项race顶层单测/37项CLI/3项采集器通过，6附件核验。真实业务配对和48小时仍未通过；详见RC13-DELIVERY.zh.md。
