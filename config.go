@@ -14,14 +14,22 @@ const MiB int64 = 1 << 20
 
 // Config has no executable hooks and never changes cgroup limits.
 type Config struct {
-	Mode         string   `json:"mode"`
-	Action       string   `json:"action"`
-	Paths        []string `json:"paths"`
-	AutoRoots    []string `json:"auto_roots"`
-	ExcludePaths []string `json:"exclude_paths"`
-	ExcludeNames []string `json:"exclude_names"`
-	CgroupPath   string   `json:"cgroup_path"`
-	StateFile    string   `json:"state_file"`
+	InstanceID            string   `json:"instance_id,omitempty"`
+	ProtectionProfile     string   `json:"protection_profile,omitempty"`
+	OutputLowReuse        bool     `json:"output_low_reuse,omitempty"`
+	NodeSignal            string   `json:"node_signal,omitempty"`
+	NodeID                string   `json:"node_id,omitempty"`
+	NodeSourceID          string   `json:"node_source_id,omitempty"`
+	BusinessSourceID      string   `json:"business_source_id,omitempty"`
+	NodeSafetyMarginBytes int64    `json:"node_safety_margin_bytes,omitempty"`
+	Mode                  string   `json:"mode"`
+	Action                string   `json:"action"`
+	Paths                 []string `json:"paths"`
+	AutoRoots             []string `json:"auto_roots"`
+	ExcludePaths          []string `json:"exclude_paths"`
+	ExcludeNames          []string `json:"exclude_names"`
+	CgroupPath            string   `json:"cgroup_path"`
+	StateFile             string   `json:"state_file"`
 	// Legacy fields are accepted only to upgrade old configuration files.
 	// They never trigger networking, token reads or history allocation.
 	WebListen                    string  `json:"web_listen,omitempty"`
@@ -109,6 +117,9 @@ func loadConfig(path string) (Config, error) {
 	return c, nil
 }
 func (c Config) validate() error {
+	if e := c.validateProfile(); e != nil {
+		return e
+	}
 	if e := c.validateLogging(); e != nil {
 		return e
 	}

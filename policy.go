@@ -6,6 +6,11 @@ import (
 )
 
 type Metrics struct {
+	CgroupDevice          uint64          `json:"cgroup_device,omitempty"`
+	CgroupInode           uint64          `json:"cgroup_inode,omitempty"`
+	Node                  *NodeSignal     `json:"node_signal,omitempty"`
+	BusinessSourceID      string          `json:"business_source_id,omitempty"`
+	BusinessTime          time.Time       `json:"business_time,omitempty"`
 	Available             map[string]bool `json:"available_metrics,omitempty"`
 	Time                  time.Time       `json:"time"`
 	Cgroup                string          `json:"cgroup"`
@@ -76,6 +81,15 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 	}
 	if c.MinNodeAvailableBytes > 0 && (m.NodeAvailable <= 0 || m.NodeAvailable < c.MinNodeAvailableBytes) {
 		return stop("CRITICAL", "host_memavailable_low_or_unknown")
+	}
+	if c.NodeSignal != "" {
+		if !validNodeSignal(c, m.Node, m.Time) {
+			return stop("SUSPENDED", "kubelet_node_signal_unavailable")
+		}
+		n := m.Node
+		if *n.MemoryPressure || *n.AvailableBytes <= nodeStopThreshold(c, n) {
+			return stop("CRITICAL", "kubelet_eviction_headroom_low_or_pressure")
+		}
 	}
 	if m.BusinessPause {
 		return stop("BACKOFF", "business_pause")

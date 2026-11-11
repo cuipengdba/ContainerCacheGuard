@@ -88,7 +88,7 @@ func detailedStatusLog(s Status, previous *Status) statusLogRecord {
 	if previous != nil {
 		x := &logChanges{Seconds: s.Time.Sub(previous.Time).Seconds(), Reason: "baseline_unavailable_or_counter_reset"}
 		a, b := s.Counters, previous.Counters
-		if x.Seconds > 0 && s.PID == previous.PID && m.Cgroup == previous.Metrics.Cgroup && m.Version == previous.Metrics.Version &&
+		if x.Seconds > 0 && s.PID == previous.PID && s.RunID == previous.RunID && reportScope(s) == reportScope(*previous) && m.Version == previous.Metrics.Version &&
 			a.ScannedBytes >= b.ScannedBytes && a.AdviceBytes >= b.AdviceBytes && a.NetReductionBytes >= b.NetReductionBytes &&
 			a.ReappearedBytes >= b.ReappearedBytes && a.Errors >= b.Errors {
 			x.Valid, x.Reason = true, ""
@@ -114,7 +114,9 @@ func logSampleUsable(s Status) bool {
 
 func explainDecision(d Decision) string {
 	text := map[string]string{
-		"observation_only": "仅观察，不执行文件缓存释放。", "warmup": "启动预热中，暂不释放。",
+		"kubelet_eviction_headroom_low_or_pressure": "kubelet实际内存余量接近驱逐线或节点已报告MemoryPressure，停止新释放建议；应由外部流程止损备份。",
+		"kubelet_node_signal_unavailable":           "kubelet节点信号缺失、过期或来源不符，暂停新释放建议。",
+		"observation_only":                          "仅观察，不执行文件缓存释放。", "warmup": "启动预热中，暂不释放。",
 		"below_cache_target": "普通文件页未超过软目标，当前无需释放。", "user_paused": "已按信号暂停新的释放建议。",
 		"waiting_healthy_recovery": "风险已缓解，等待连续健康采样达到恢复窗口。",
 		"dirty_or_writeback":       "脏页或写回量较高，暂停新建议以免增加写回压力。",

@@ -27,6 +27,11 @@ jobs:
           set -euo pipefail
           go vet ./...
           go test -race -count=1 -v ./... | tee unit-results.log
+      - name: Optional kubelet collector normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_kubelet_signal.py -v 2>&1 | tee collector-results.log
       - name: Build static native binary
         shell: bash
         env:

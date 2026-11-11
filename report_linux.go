@@ -22,6 +22,9 @@ const reportLineLimit = 4 * 1024 * 1024
 const reportBucketLimit = 4096
 
 type HourReport struct {
+	InstanceID          string             `json:"instance_id,omitempty"`
+	NodeAvailableMin    *int64             `json:"kubelet_memory_available_min_bytes"`
+	NodePressureSamples int                `json:"node_memory_pressure_samples"`
 	Hour                string             `json:"hour"`
 	Cgroup              string             `json:"cgroup"`
 	CgroupVersion       int                `json:"cgroup_version"`
@@ -59,10 +62,11 @@ type OfflineReport struct {
 	Notes         []string      `json:"notes"`
 }
 type reportOptions struct {
-	location    *time.Location
-	from, until time.Time
-	maxGap      time.Duration
-	instance    string
+	location         *time.Location
+	from, until      time.Time
+	maxGap           time.Duration
+	instance         string
+	expectedInstance string
 }
 type reportAggregator struct {
 	report      OfflineReport
@@ -86,7 +90,9 @@ func newReportAggregator(o reportOptions) *reportAggregator {
 		},
 	}}
 }
-func reportScope(s Status) string { return fmt.Sprintf("%d:%s", s.Metrics.Version, s.Metrics.Cgroup) }
+func reportScope(s Status) string {
+	return fmt.Sprintf("%s:%d:%d:%d:%s", s.InstanceID, s.Metrics.CgroupDevice, s.Metrics.CgroupInode, s.Metrics.Version, s.Metrics.Cgroup)
+}
 func (a *reportAggregator) bucket(s Status, at time.Time) (*HourReport, error) {
 	hour := at.In(a.options.location).Format("2006-01-02T15:00:00Z07:00")
 	key := reportScope(s) + "\x00" + hour
@@ -96,7 +102,7 @@ func (a *reportAggregator) bucket(s Status, at time.Time) (*HourReport, error) {
 	if len(a.buckets) >= reportBucketLimit {
 		return nil, errors.New("小时分组超过4096，请用--from/--until缩小范围")
 	}
-	h := &HourReport{Hour: hour, Cgroup: s.Metrics.Cgroup, CgroupVersion: s.Metrics.Version, Actions: map[string]int{}, States: map[string]int{}, MissingGuards: map[string]int{}, StateSeconds: map[string]float64{}}
+	h := &HourReport{InstanceID: s.InstanceID, Hour: hour, Cgroup: s.Metrics.Cgroup, CgroupVersion: s.Metrics.Version, Actions: map[string]int{}, States: map[string]int{}, MissingGuards: map[string]int{}, StateSeconds: map[string]float64{}}
 	a.buckets[key] = h
 	a.report.Hours = append(a.report.Hours, h)
 	return h, nil
@@ -120,6 +126,15 @@ func peakFloat(p **float64, v float64) {
 	}
 }
 func (a *reportAggregator) add(s Status) error {
+	if a.options.expectedInstance != "" && (s.InstanceID != a.options.expectedInstance || s.RunID == "") {
+		return errors.New("manifest实例与日志身份不符，或缺少run_id；不能合并旧日志")
+	}
+	if s.InstanceID != "" && !identifier.MatchString(s.InstanceID) {
+		return errors.New("日志instance_id无效")
+	}
+	if s.RunID != "" && !runIdentifier.MatchString(s.RunID) {
+		return errors.New("日志run_id无效")
+	}
 	if s.Time.IsZero() || s.PID <= 0 || s.Version == "" || s.Metrics.Cgroup == "" || (s.Metrics.Version != 1 && s.Metrics.Version != 2) {
 		return errors.New("状态记录缺少时间、PID、版本或cgroup身份")
 	}
@@ -167,6 +182,12 @@ func (a *reportAggregator) add(s Status) error {
 	}
 	if logSampleUsable(s) {
 		m := s.Metrics
+		if m.Node != nil && m.Node.AvailableBytes != nil {
+			minIntValue(&h.NodeAvailableMin, *m.Node.AvailableBytes)
+		}
+		if m.Node != nil && m.Node.MemoryPressure != nil && *m.Node.MemoryPressure {
+			h.NodePressureSamples++
+		}
 		if m.Available["file_bytes"] && m.Available["shmem_bytes"] && m.File >= 0 && m.Shmem >= 0 {
 			peakInt(&h.OrdinaryPeak, max64(0, m.File-m.Shmem))
 			h.UsableMemorySamples++
@@ -192,7 +213,7 @@ func (a *reportAggregator) add(s Status) error {
 	}
 	if exists {
 		gap := s.Time.Sub(prev.Time)
-		continuous := gap > 0 && gap <= a.options.maxGap && s.PID == prev.PID && s.Version == prev.Version && a.generations[scope] == a.generation
+		continuous := gap > 0 && gap <= a.options.maxGap && s.PID == prev.PID && s.Version == prev.Version && s.RunID == prev.RunID && a.generations[scope] == a.generation
 		if continuous {
 			// Split time at local-hour boundaries; do not invent duration for gaps.
 			for cur := prev.Time; cur.Before(s.Time); {
@@ -350,7 +371,7 @@ func managedLogName(s string) bool {
 func markdownReport(r OfflineReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# ContainerCacheGuard 小时统计\n\n实例：%s；时区：%s；来源文件：%d。\n\n", markdownCell(r.Instance), r.Timezone, r.SourceFiles)
-	b.WriteString("| 小时 | 普通文件缓存采样峰值 MiB | 匿名内存采样峰值 MiB | 宿主可用内存采样最低 MiB | 已观察间隔秒 | 允许回收估算秒 | 建议量 MiB | 区域复查净下降 MiB | 重新驻留 MiB | 模式/状态样本 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n")
+	b.WriteString("| 小时 / 实例 | 普通文件缓存采样峰值 MiB | 匿名内存采样峰值 MiB | 宿主可用内存采样最低 MiB | 已观察间隔秒 | 允许回收估算秒 | 建议量 MiB | 区域复查净下降 MiB | 重新驻留 MiB | 模式/状态样本 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n")
 	integer := func(v *int64) string {
 		if v == nil {
 			return "未知"
@@ -360,7 +381,7 @@ func markdownReport(r OfflineReport) string {
 	for _, h := range r.Hours {
 		action, _ := json.Marshal(h.Actions)
 		state, _ := json.Marshal(h.States)
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %.2f | %.2f | %.2f | %.2f | %.2f | %s / %s |\n", h.Hour, integer(h.OrdinaryPeak), integer(h.AnonPeak), integer(h.HostAvailableMin), h.ObservedSeconds, h.AllowedSeconds, float64(h.AdviceBytes)/float64(MiB), float64(h.NetReductionBytes)/float64(MiB), float64(h.ReappearedBytes)/float64(MiB), markdownCell(string(action)), markdownCell(string(state)))
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %.2f | %.2f | %.2f | %.2f | %.2f | %s / %s |\n", h.Hour+" / "+markdownCell(h.InstanceID), integer(h.OrdinaryPeak), integer(h.AnonPeak), integer(h.HostAvailableMin), h.ObservedSeconds, h.AllowedSeconds, float64(h.AdviceBytes)/float64(MiB), float64(h.NetReductionBytes)/float64(MiB), float64(h.ReappearedBytes)/float64(MiB), markdownCell(string(action)), markdownCell(string(state)))
 	}
 	b.WriteString("\n")
 	for _, h := range r.Hours {
@@ -383,7 +404,8 @@ func reportCommand(args []string) error {
 	dir := fs.String("log-directory", "", "每日文件日志目录，不递归扫描")
 	var files pathsFlag
 	fs.Var(&files, "log-file", "输入JSONL日志，可重复；按文件名排序")
-	format := fs.String("format", "markdown", "markdown或json")
+	format := fs.String("format", "markdown", "markdown、json或svg")
+	manifest := fs.String("manifest", "", "多实例来源清单JSON，严格绑定instance_id；不能混入旧版无身份日志")
 	outputPath := fs.String("output", "", "输出文件；默认标准输出")
 	zone := fs.String("timezone", "Asia/Shanghai", "小时分组时区")
 	from := fs.String("from", "", "包含的起点，RFC3339")
@@ -399,8 +421,8 @@ func reportCommand(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("report不接受位置参数")
 	}
-	if *format != "json" && *format != "markdown" {
-		return errors.New("format必须为json或markdown")
+	if *format != "json" && *format != "markdown" && *format != "svg" {
+		return errors.New("format必须为json、markdown或svg")
 	}
 	if *maxGap < 100*time.Millisecond || *maxGap > time.Hour {
 		return errors.New("max-gap须在100ms至1h之间")
@@ -428,7 +450,7 @@ func reportCommand(args []string) error {
 	if !o.from.IsZero() && !o.until.IsZero() && !o.until.After(o.from) {
 		return errors.New("until必须晚于from")
 	}
-	if len(files) == 0 && *dir == "" {
+	if *manifest == "" && len(files) == 0 && *dir == "" {
 		c, e := loadConfig(*config)
 		if e != nil {
 			return e
@@ -441,29 +463,19 @@ func reportCommand(args []string) error {
 			return err
 		}
 	}
-	paths, err := reportFiles(*dir, files)
-	if err != nil {
-		return err
-	}
-	a := newReportAggregator(o)
-	a.report.SourceFiles = len(paths)
-	for _, p := range paths {
-		f, e := safeOpen(p)
-		if e != nil {
-			return e
+	var paths []string
+	var result OfflineReport
+	if *manifest != "" {
+		if *dir != "" || len(files) > 0 || *config != "" {
+			return errors.New("manifest不能与config/log-directory/log-file混用")
 		}
-		id, e := statFile(f)
-		if e != nil || id.Mode&0170000 != 0100000 {
-			f.Close()
-			return fmt.Errorf("日志必须是普通文件：%s", p)
-		}
-		e = a.read(io.LimitReader(f, id.Size))
-		f.Close()
-		if e != nil {
-			return fmt.Errorf("%s：%w", p, e)
+		result, paths, err = manifestReport(*manifest, o)
+	} else {
+		paths, err = reportFiles(*dir, files)
+		if err == nil {
+			result, err = readReportPaths(paths, o)
 		}
 	}
-	result, err := a.finish()
 	if err != nil {
 		return err
 	}
@@ -471,6 +483,8 @@ func reportCommand(args []string) error {
 	if *format == "json" {
 		body, err = json.MarshalIndent(result, "", "  ")
 		body = append(body, '\n')
+	} else if *format == "svg" {
+		body = []byte(svgReport(result))
 	} else {
 		body = []byte(markdownReport(result))
 	}
@@ -487,6 +501,11 @@ func reportCommand(args []string) error {
 	}
 	if managedLogName(filepath.Base(dest)) {
 		return errors.New("不能将报表写为受管每日日志文件")
+	}
+	if *manifest != "" {
+		if p, e := filepath.Abs(*manifest); e == nil && p == dest {
+			return errors.New("报表不能覆盖来源清单")
+		}
 	}
 	for _, p := range paths {
 		if dest == p {

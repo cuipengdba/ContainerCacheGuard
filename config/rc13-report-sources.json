@@ -1,0 +1,28 @@
+{
+  "sources": [
+    {
+      "instance_id": "lab94/puc/dbs",
+      "log_files": [
+        "/reports/dbs/containercacheguard-2026-11-11.log"
+      ]
+    },
+    {
+      "instance_id": "lab94/puc/hisdbs",
+      "log_files": [
+        "/reports/hisdbs/containercacheguard-2026-11-11.log"
+      ]
+    },
+    {
+      "instance_id": "lab94/puc/dbsbackup",
+      "log_files": [
+        "/reports/dbsbackup/containercacheguard-2026-11-11.log"
+      ]
+    },
+    {
+      "instance_id": "lab94/puc/hisdbsbackup",
+      "log_files": [
+        "/reports/hisdbsbackup/containercacheguard-2026-11-11.log"
+      ]
+    }
+  ]
+}

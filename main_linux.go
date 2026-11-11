@@ -28,7 +28,7 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
 用法：
   containercacheguard init-config --mode auto|paths > config.json
   containercacheguard doctor [--config config.json] [--path /data] [--require-ready]
-  containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json]
+  containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json|svg]
   containercacheguard run --config config.json [--mode auto|paths] [--action observe|enforce]
   containercacheguard status [--state-file /tmp/containercacheguard/status.json]
   containercacheguard scan --path /data [--scan-bytes-per-second 268435456]
@@ -43,7 +43,10 @@ SIGUSR1 暂停新释放，SIGUSR2 恢复，SIGTERM/SIGINT 退出；配置修改�
 日志默认每天一个文件，最多30个日历日、合计1GB；目录/天数/容量/时区可配置。
 scan 是只读驻留扫描，输出不是热度；可能需要完整遍历，不属于常态轻量监控。
 doctor --require-ready采集两个样本，保护输入不齐返回非零；不会启用PSI或关闭保护。
-report离线读取每日日志，生成小时统计；不访问数据目录，不预测K8s驱逐。
+report离线读取每日日志，生成小时统计；--manifest严格绑定多实例来源，支持独立SVG图片。
+instance_id标识部署实例；每次run启动生成独立随机run_id，日志/状态带可见cgroup设备与inode。
+protection_profile默认strict；limited-output为显式实验策略，仅指定低复用备份产物，
+须配置来源绑定的kubelet与业务信号、替代保护和更小预算；缺项即暂停，不能承诺不被驱逐。
 
 只操作已授权路径下支持的普通磁盘文件。不会删除文件、清空应用堆、清理全机缓存、
 修改 cgroup 限额或杀业务。fadvise 可能引起写回；驻留不等于冷热，无法保证零影响。
@@ -174,9 +177,14 @@ func entry(args []string) error {
 		roots = discoverRoots(c)
 	}
 	if cmd == "doctor" {
+		invocationID, idErr := newRunID()
+		if idErr != nil {
+			return idErr
+		}
 		r, e := newMetricReader(c.CgroupPath)
-		result := map[string]any{"version": version, "architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "uid": os.Geteuid(), "mode": c.Mode, "action": c.Action, "roots": roots, "file_cache_backend": "mincore+fadvise", "other_caches": "diagnostic_only", "node_pressure_source": "host MemAvailable (not kubelet Summary)"}
+		result := map[string]any{"version": version, "architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "uid": os.Geteuid(), "mode": c.Mode, "action": c.Action, "roots": roots, "file_cache_backend": "mincore+fadvise", "other_caches": "diagnostic_only", "node_pressure_source": "host MemAvailable proxy; optional source-bound kubelet JSON", "instance_id": c.InstanceID, "protection_profile": c.profile()}
 		result["web_service_enabled"] = false
+		result["run_id"] = invocationID
 		result["deprecated_config_fields"] = c.deprecatedWebFields()
 		var m Metrics
 		readerErr := e
@@ -189,6 +197,7 @@ func entry(args []string) error {
 				m = r.sample(c)
 			}
 			business(c, &m)
+			nodeSignal(c, &m)
 			result["metrics"] = m
 			result["protection"] = assessProtection(c, m)
 			if m.Error != "" {
@@ -245,6 +254,9 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
+	InstanceID        string            `json:"instance_id,omitempty"`
+	RunID             string            `json:"run_id,omitempty"`
+	ProtectionProfile string            `json:"protection_profile,omitempty"`
 	Time              time.Time         `json:"time"`
 	Version           string            `json:"version"`
 	PID               int               `json:"pid"`
@@ -283,9 +295,10 @@ func business(c Config, m *Metrics) {
 		return
 	}
 	var v struct {
-		Time  time.Time `json:"time"`
-		P99MS *float64  `json:"p99_ms"`
-		Pause bool      `json:"pause"`
+		Time     time.Time `json:"time"`
+		P99MS    *float64  `json:"p99_ms"`
+		Pause    bool      `json:"pause"`
+		SourceID string    `json:"source_id"`
 	}
 	body, readErr := io.ReadAll(io.LimitReader(f, 16385))
 	if readErr != nil || len(body) > 16384 {
@@ -308,10 +321,15 @@ func business(c Config, m *Metrics) {
 		m.Error = "business signal p99_ms missing"
 		return
 	}
-	if v.P99MS != nil && *v.P99MS < 0 {
+	if v.P99MS != nil && !finiteNonnegative(*v.P99MS) {
 		m.Error = "business signal p99_ms must be nonnegative"
 		return
 	}
+	if c.BusinessSourceID != "" && v.SourceID != c.BusinessSourceID {
+		m.Error = "business signal source mismatch"
+		return
+	}
+	m.BusinessSourceID, m.BusinessTime = v.SourceID, v.Time
 	m.BusinessP99 = v.P99MS
 	m.BusinessPause = v.Pause
 }
@@ -322,6 +340,10 @@ func runDaemon(c Config, roots []string, duration time.Duration) error {
 // The factory is an internal test seam; the CLI always uses the real-cgroup
 // validating factory above. No flag or configuration can select a fake reader.
 func runDaemonWithReader(c Config, roots []string, duration time.Duration, readerFactory func(string) (*metricReader, error)) (runErr error) {
+	runID, e := newRunID()
+	if e != nil {
+		return e
+	}
 	lock, e := lockState(c.StateFile)
 	if e != nil {
 		return e
@@ -334,7 +356,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	}
 	defer func() {
 		allow.Store(false)
-		event := map[string]any{"time": time.Now(), "event": "daemon_stopped", "level": "INFO", "message": "CCG已停止；不接管数据库或业务进程。"}
+		event := map[string]any{"time": time.Now(), "event": "daemon_stopped", "instance_id": c.InstanceID, "run_id": runID, "level": "INFO", "message": "CCG已停止；不接管数据库或业务进程。"}
 		if runErr != nil {
 			event["error"] = runErr.Error()
 			event["level"] = "ERROR"
@@ -346,7 +368,9 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 			runErr = err
 		}
 	}()
-	if e = logs.WriteJSON(startupLog(c, roots)); e != nil {
+	startEvent := startupLog(c, roots)
+	startEvent["instance_id"], startEvent["run_id"], startEvent["protection_profile"] = c.InstanceID, runID, c.profile()
+	if e = logs.WriteJSON(startEvent); e != nil {
 		return e
 	}
 	if fields := c.deprecatedWebFields(); len(fields) > 0 {
@@ -390,7 +414,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 		}
 	}()
 	started := time.Now()
-	s := Status{Time: started, Version: version, PID: os.Getpid(), Mode: c.Mode, Action: c.Action, Roots: roots, IntervalMS: c.IntervalMS}
+	s := Status{InstanceID: c.InstanceID, RunID: runID, ProtectionProfile: c.profile(), Time: started, Version: version, PID: os.Getpid(), Mode: c.Mode, Action: c.Action, Roots: roots, IntervalMS: c.IntervalMS}
 	m := r.sample(c)
 	oomBaseline := m.OOMKill
 	oomBaselineReady := m.Available["oom_kill_total"]
@@ -398,6 +422,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	var previousLog *Status
 	busySince := time.Time{}
 	var recovery recoveryGate
+	var external externalGuard
 	nextSample := time.Time{}
 	nextWork := time.Time{}
 	tick := time.NewTicker(20 * time.Millisecond)
@@ -438,6 +463,8 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				}
 				m = r.sample(c)
 				business(c, &m)
+				nodeSignal(c, &m)
+				external.check(&m)
 				if !oomBaselineReady && m.Available["oom_kill_total"] {
 					oomBaseline, oomBaselineReady = m.OOMKill, true
 				}
@@ -457,7 +484,13 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				if !m.FileRefaultRateValid {
 					s.Degraded = append(s.Degraded, "file_refault_rate_unavailable")
 				}
-				s.Degraded = append(s.Degraded, "no_kubelet_summary", "application_heap_shmem_slab_not_reclaimed")
+				if m.Node == nil {
+					s.Degraded = append(s.Degraded, "no_kubelet_summary")
+				}
+				if c.profile() == "limited-output" {
+					s.Degraded = append(s.Degraded, "experimental_limited_output_not_field_accepted")
+				}
+				s.Degraded = append(s.Degraded, "application_heap_shmem_slab_not_reclaimed")
 				if len(roots) == 0 {
 					s.Decision.Allow = false
 					s.Decision.State = "SUSPENDED"

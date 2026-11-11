@@ -1,12 +1,17 @@
 package main
 
-import "math"
+import (
+	"math"
+	"time"
+)
 
 type ProtectionStatus struct {
-	Ready       bool     `json:"ready"`
-	Missing     []string `json:"missing_metrics"`
-	Disabled    []string `json:"disabled_guards"`
-	Unsupported []string `json:"unsupported_guards"`
+	Profile      string   `json:"profile"`
+	Experimental bool     `json:"experimental"`
+	Ready        bool     `json:"ready"`
+	Missing      []string `json:"missing_metrics"`
+	Disabled     []string `json:"disabled_guards"`
+	Unsupported  []string `json:"unsupported_guards"`
 }
 
 func finiteNonnegative(value float64) bool {
@@ -16,7 +21,7 @@ func finiteNonnegative(value float64) bool {
 // Configuration decides which guards are required, not whether their missing
 // values happen to decode as zero. This assessment never grants permission.
 func assessProtection(c Config, m Metrics) ProtectionStatus {
-	s := ProtectionStatus{Missing: []string{}, Disabled: []string{}, Unsupported: []string{}}
+	s := ProtectionStatus{Profile: c.profile(), Experimental: c.profile() == "limited-output", Missing: []string{}, Disabled: []string{}, Unsupported: []string{}}
 	need := func(key string, valid bool) {
 		if !m.Available[key] || !valid {
 			s.Missing = append(s.Missing, key)
@@ -45,7 +50,9 @@ func assessProtection(c Config, m Metrics) ProtectionStatus {
 	} else {
 		s.Disabled = append(s.Disabled, "io_bytes_per_second")
 	}
-	if c.MaxIOPSIAvg10 > 0 {
+	if c.profile() == "limited-output" && m.IOPSI == nil && m.Available["io_psi_interface_absent"] {
+		s.Unsupported = append(s.Unsupported, "io_psi_avg10:limited-output-experimental")
+	} else if c.MaxIOPSIAvg10 > 0 {
 		need("io_psi_avg10", m.IOPSI != nil && finiteNonnegative(*m.IOPSI) && *m.IOPSI <= 100)
 	} else {
 		s.Disabled = append(s.Disabled, "io_psi_avg10")
@@ -66,6 +73,17 @@ func assessProtection(c Config, m Metrics) ProtectionStatus {
 		}
 	} else {
 		s.Disabled = append(s.Disabled, "business_p99_ms")
+	}
+	if c.NodeSignal != "" && !validNodeSignal(c, m.Node, m.Time) {
+		s.Missing = append(s.Missing, "kubelet_node_signal")
+	}
+	if c.profile() == "limited-output" {
+		if m.Version != 2 {
+			s.Missing = append(s.Missing, "limited_output_requires_cgroup_v2")
+		}
+		if m.BusinessSourceID != c.BusinessSourceID || m.BusinessTime.IsZero() || m.Time.Sub(m.BusinessTime) > time.Duration(c.SignalMaxAgeSeconds)*time.Second || m.BusinessTime.Sub(m.Time) > time.Second {
+			s.Missing = append(s.Missing, "business_signal_identity")
+		}
 	}
 	s.Ready = len(s.Missing) == 0
 	return s

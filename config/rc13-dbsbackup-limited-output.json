@@ -1,0 +1,33 @@
+{
+  "mode": "paths",
+  "action": "observe",
+  "instance_id": "lab94/puc/dbsbackup",
+  "protection_profile": "limited-output",
+  "output_low_reuse": true,
+  "paths": [
+    "/backup"
+  ],
+  "state_file": "/tmp/ccg-dbsbackup/status.json",
+  "log_directory": "/var/log/containercacheguard",
+  "node_signal": "/signals/node.json",
+  "node_id": "REPLACE-WITH-NODE-UID",
+  "node_source_id": "lab94-kubelet",
+  "node_safety_margin_bytes": 1073741824,
+  "business_signal": "/signals/dbs-business.json",
+  "business_source_id": "dbs-business-probe",
+  "signal_max_age_seconds": 30,
+  "max_business_p99_ms": 100,
+  "cache_target_bytes": 1073741824,
+  "max_io_bytes_per_second": 104857600,
+  "max_file_refaults_per_second": 1000,
+  "scan_bytes_per_second": 67108864,
+  "reclaim_bytes_per_second": 8388608,
+  "initial_reclaim_bytes_per_second": 1048576,
+  "region_bytes": 1048576,
+  "max_operations_per_second": 64,
+  "discover_entries_per_second": 200,
+  "worker_budget_ms": 10,
+  "log_keep_days": 30,
+  "log_max_total_bytes": 1000000000,
+  "log_timezone": "Asia/Shanghai"
+}

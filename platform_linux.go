@@ -395,7 +395,7 @@ func newMetricReader(path string) (*metricReader, error) {
 	return &metricReader{path: path, id: id}, nil
 }
 func (r *metricReader) sample(c Config) Metrics {
-	m := Metrics{Time: time.Now(), Cgroup: r.path}
+	m := Metrics{Time: time.Now(), Cgroup: r.path, CgroupDevice: r.id.Dev, CgroupInode: r.id.Ino}
 	defer func() {
 		if m.Error != "" {
 			// Do not compute a subsequent rate across a collection gap.
@@ -488,6 +488,10 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.IOBytes, m.Available["io_bytes"] = parseIOBytes(string(b))
 	}
 	m.IOPSI = psi(filepath.Join(r.path, "io.pressure"))
+	if m.IOPSI == nil {
+		_, psiErr := os.Stat(filepath.Join(r.path, "io.pressure"))
+		m.Available["io_psi_interface_absent"] = errors.Is(psiErr, os.ErrNotExist)
+	}
 	m.MemoryPSI = psi(filepath.Join(r.path, "memory.pressure"))
 	node := values("/proc/meminfo")
 	m.NodeAvailable = node["MemAvailable"] * 1024

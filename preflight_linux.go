@@ -38,6 +38,9 @@ func preflight(c Config, m Metrics, readerErr error, read func(string) ([]byte, 
 		return p
 	}
 	guard := assessProtection(c, m)
+	if guard.Experimental {
+		add("experimental_limited_output", "显式选择受限备份输出策略；IO字节速率不等价于PSI等待压力，真实业务效果尚待验收。", "只对低复用备份产物试用；先匹配对照，完整备份/校验/恢复及尾延迟验收前不推广到PGDATA。")
+	}
 	p.ProtectionReady = guard.Ready
 	if m.Version == 1 {
 		add("cgroup_v1_capability_limits", "当前为cgroup v1，不能假定v2 IO PSI、IO速率或OOM计数接口存在。", "按实际可见字段评审配置；本命令不会关闭保护或改cgroup版本。")

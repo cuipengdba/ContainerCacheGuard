@@ -195,6 +195,37 @@ def main():
         bad=subprocess.run([binary,'report','--log-directory',str(reportdir)],capture_output=True,text=True,timeout=5)
         assert bad.returncode!=0
         checks.append('offline_report_rejects_fifo_without_blocking')
+        # rc.13: actual daemon identity, source-bound multi-container report,
+        # and isolated malformed profile rejection; no cluster configuration.
+        assert len(sample['run_id'])==32 and sample['protection_profile']=='strict'
+        checks.append('daemon_has_random_run_identity_with_strict_default')
+        sources=[]
+        for role in ['dbs','hisdbs']:
+            path=w/(role+'-bound.jsonl')
+            bound=[]
+            for line in records:
+                item=json.loads(line);item['instance_id']='lab/'+role
+                bound.append(json.dumps(item))
+            path.write_text('\n'.join(bound)+'\n')
+            sources.append(dict(instance_id='lab/'+role,log_files=[str(path)]))
+        manifest=w/'sources.json';manifest.write_text(json.dumps(dict(sources=sources)))
+        multi=json.loads(run([binary,'report','--manifest',manifest,'--format','json']))
+        assert len(multi['hours'])==4 and {x['instance_id'] for x in multi['hours']}=={'lab/dbs','lab/hisdbs'}
+        checks.append('multi_report_manifest_binds_instance_and_keeps_scopes_separate')
+        svg=w/'hourly.svg';run([binary,'report','--manifest',manifest,'--format','svg','--output',svg])
+        import xml.etree.ElementTree as ET
+        assert ET.parse(svg).getroot().tag=='{http://www.w3.org/2000/svg}svg'
+        assert 'lab/dbs' in svg.read_text() and '<script' not in svg.read_text()
+        checks.append('offline_svg_is_standalone_valid_xml_without_web')
+        sources[1]['instance_id']='wrong';manifest.write_text(json.dumps(dict(sources=sources)))
+        bad=subprocess.run([binary,'report','--manifest',str(manifest)],capture_output=True,text=True,timeout=10)
+        assert bad.returncode!=0
+        checks.append('multi_report_refuses_source_identity_mismatch')
+        cfg.update(protection_profile='limited-output',output_low_reuse=False)
+        config.write_text(json.dumps(cfg))
+        bad=subprocess.run([binary,'run','--config',str(config),'--duration','1s'],capture_output=True,text=True,timeout=5)
+        assert bad.returncode!=0
+        checks.append('limited_output_requires_explicit_conservative_configuration')
         report=dict(success=True,checks=checks,kernel=os.uname().release,arch=os.uname().machine,page_size=os.sysconf('SC_PAGE_SIZE'),initial_resident=initial['Resident'],kubernetes_eviction_test=False)
         if args.output:pathlib.Path(args.output).write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(report,indent=2))
