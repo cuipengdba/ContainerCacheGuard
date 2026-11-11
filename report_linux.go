@@ -23,6 +23,9 @@ const reportBucketLimit = 4096
 
 type HourReport struct {
 	InstanceID          string             `json:"instance_id,omitempty"`
+	RunIDs              []string           `json:"run_ids,omitempty"`
+	CgroupDevice        uint64             `json:"cgroup_device,omitempty"`
+	CgroupInode         uint64             `json:"cgroup_inode,omitempty"`
 	NodeAvailableMin    *int64             `json:"kubelet_memory_available_min_bytes"`
 	NodePressureSamples int                `json:"node_memory_pressure_samples"`
 	Hour                string             `json:"hour"`
@@ -102,7 +105,7 @@ func (a *reportAggregator) bucket(s Status, at time.Time) (*HourReport, error) {
 	if len(a.buckets) >= reportBucketLimit {
 		return nil, errors.New("小时分组超过4096，请用--from/--until缩小范围")
 	}
-	h := &HourReport{InstanceID: s.InstanceID, Hour: hour, Cgroup: s.Metrics.Cgroup, CgroupVersion: s.Metrics.Version, Actions: map[string]int{}, States: map[string]int{}, MissingGuards: map[string]int{}, StateSeconds: map[string]float64{}}
+	h := &HourReport{InstanceID: s.InstanceID, CgroupDevice: s.Metrics.CgroupDevice, CgroupInode: s.Metrics.CgroupInode, Hour: hour, Cgroup: s.Metrics.Cgroup, CgroupVersion: s.Metrics.Version, Actions: map[string]int{}, States: map[string]int{}, MissingGuards: map[string]int{}, StateSeconds: map[string]float64{}}
 	a.buckets[key] = h
 	a.report.Hours = append(a.report.Hours, h)
 	return h, nil
@@ -165,6 +168,21 @@ func (a *reportAggregator) add(s Status) error {
 	h, err := a.bucket(s, s.Time)
 	if err != nil {
 		return err
+	}
+	if s.RunID != "" {
+		seen := false
+		for _, id := range h.RunIDs {
+			if id == s.RunID {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			if len(h.RunIDs) >= 128 {
+				return errors.New("每小时运行身份超过128，请缩小报告范围或检查日志来源")
+			}
+			h.RunIDs = append(h.RunIDs, s.RunID)
+		}
 	}
 	h.Samples++
 	h.Actions[s.Action]++

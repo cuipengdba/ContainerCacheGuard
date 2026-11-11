@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 
 func TestReportRunIDAndCgroupIdentityBreakCounterContinuity(t *testing.T) {
 	a := reportTestAggregator(t)
-	at := time.Now()
+	at := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
 	runA := strings.Repeat("a", 32)
 	runB := strings.Repeat("b", 32)
 	for i := 0; i < 4; i++ {
@@ -39,11 +40,35 @@ func TestReportRunIDAndCgroupIdentityBreakCounterContinuity(t *testing.T) {
 		t.Fatal(e)
 	}
 	var advice int64
+	var identities int
 	for _, h := range r.Hours {
 		advice += h.AdviceBytes
+		if h.CgroupDevice != 1 || h.CgroupInode == 0 || len(h.RunIDs) == 0 {
+			t.Fatal("hour lost cgroup/run identity")
+		}
+		identities += len(h.RunIDs)
 	}
 	if advice != 100 {
 		t.Fatalf("bridged restart/inode change: %d", advice)
+	}
+	if identities != 3 {
+		t.Fatalf("expected two runs in first cgroup and one in second, got %d", identities)
+	}
+}
+
+func TestReportBoundsRunIdentityHistory(t *testing.T) {
+	a := reportTestAggregator(t)
+	at := time.Date(2026, 11, 11, 1, 0, 0, 0, time.UTC)
+	for i := 0; i < 129; i++ {
+		s := reportTestSample(at.Add(time.Duration(i)*time.Second), 0)
+		s.RunID = fmt.Sprintf("%032x", i)
+		e := a.add(s)
+		if i < 128 && e != nil {
+			t.Fatal(e)
+		}
+		if i == 128 && e == nil {
+			t.Fatal("unbounded run identity history")
+		}
 	}
 }
 func TestMultiReportManifestSeparatesContainersAndRejectsIdentityMismatch(t *testing.T) {

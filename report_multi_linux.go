@@ -120,10 +120,13 @@ func svgReport(r OfflineReport) string {
 	}
 	for i, h := range r.Hours {
 		y := 150 + i*160
-		fmt.Fprintf(&b, `<rect x="18" y="%d" width="1204" height="150" rx="8" fill="white"/>`, y)
+		fmt.Fprintf(&b, `<g><title>%s</title><rect x="18" y="%d" width="1204" height="150" rx="8" fill="white"/>`, html.EscapeString(fmt.Sprintf("实例%s；cgroup=%s；dev/inode=%d/%d；运行标识=%s", h.InstanceID, h.Cgroup, h.CgroupDevice, h.CgroupInode, strings.Join(h.RunIDs, ","))), y)
 		label := h.InstanceID
 		if label == "" {
 			label = "旧日志：未绑定实例"
+		}
+		if len(label) > 80 {
+			label = label[:80] + "…"
 		}
 		text(30, y+24, 16, h.Hour+" | "+label)
 		vals := []*int64{h.OrdinaryPeak, h.AnonPeak, h.ShmemPeak}
@@ -152,8 +155,22 @@ func svgReport(r OfflineReport) string {
 		}
 		text(760, y+48, 13, "kubelet余量最低："+node)
 		text(760, y+71, 13, fmt.Sprintf("CCG RSS峰值：%s | CPU峰值：%s", svgMiB(h.SelfRSSPeak), svgPercent(h.CPUPeak)))
-		text(760, y+94, 13, fmt.Sprintf("样本 %d | 缺保护输入 %d | 未衔接间隔 %d", h.Samples, len(h.MissingGuards), h.UnbridgedIntervals))
-		text(30, y+125, 13, fmt.Sprintf("状态 %s | 模式 %s", jsonText(h.States), jsonText(h.Actions)))
+		text(760, y+94, 13, fmt.Sprintf("样本 %d | 缺保护项 %d | 未衔接间隔 %d", h.Samples, len(h.MissingGuards), h.UnbridgedIntervals))
+		io := "未知"
+		if h.IOPeak != nil {
+			io = fmt.Sprintf("%.1f MiB/s", *h.IOPeak/float64(MiB))
+		}
+		pressure := "未知"
+		if h.NodeAvailableMin != nil {
+			pressure = fmt.Sprintf("%d", h.NodePressureSamples)
+		}
+		text(760, y+117, 13, "IO峰值："+io+" | MemoryPressure样本："+pressure)
+		state := fmt.Sprintf("状态 %s | 模式 %s", jsonText(h.States), jsonText(h.Actions))
+		if len(state) > 150 {
+			state = state[:150] + "…（完整状态见JSON）"
+		}
+		text(30, y+125, 13, state)
+		b.WriteString("</g>")
 	}
 	text(28, height-24, 13, "仅文件范围释放建议；匿名/共享内存不由本工具清理。跨小时柱长各自归一化，请按数值比较。")
 	b.WriteString("</g></svg>\n")

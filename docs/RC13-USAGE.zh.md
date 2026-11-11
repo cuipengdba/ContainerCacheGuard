@@ -10,7 +10,7 @@
 
 `protection_profile`省略或`strict`：保持旧行为，默认要求有效IO PSI；原配置没有被静默弱化。历史明确设置某个可选阈值为0的语义保留，医生报告仍列出禁用保护。
 
-`limited-output`：实验功能，只允许cgroup v2、`mode=paths`、显式`output_low_reuse=true`、绝对缓存预算和`trigger=budget`。只有IO PSI不可见时才允许这一项缺口，状态明确标记experimental；如果PSI可见仍按原阈值保护。须同时具备连续IO、文件refault、内存分类、脏页/写回、OOM、自身CPU/RSS及来源绑定的节点和真实业务p99。IO吞吐不等于等待时间，不能称为PSI替代品。[Linux PSI接口说明](https://docs.kernel.org/accounting/psi.html)定义了资源等待口径。
+`limited-output`：实验功能，只允许cgroup v2、`mode=paths`、显式`output_low_reuse=true`、绝对缓存预算和`trigger=budget`。只有IO PSI接口明确不存在时才允许这一项缺口；接口存在但无权读取或内容损坏仍暂停，状态明确标记experimental；如果PSI可见仍按原阈值保护。须同时具备连续IO、文件refault、内存分类、脏页/写回、OOM、自身CPU/RSS及来源绑定的节点和真实业务p99。IO吞吐不等于等待时间，不能称为PSI替代品。[Linux PSI接口说明](https://docs.kernel.org/accounting/psi.html)定义了资源等待口径。
 
 任何风险只会停止CCG新释放建议，**不会自动暂停pg_basebackup**；外部备份止损和业务容量仍需管理。节点available小于等于`max(hard,soft)+安全余量`或MemoryPressure为true就停止；soft宽限秒数用于展示，CCG提前停止，不等宽限耗尽。它不覆盖磁盘/inode/PID压力、所有分配峰值或其它节点服务，不能保证永不驱逐。
 
@@ -79,7 +79,7 @@ doctor就绪只代表输入齐全，可能仍因水位、预热或SLO暂停，�
 
 新日志自带run_id，cgroup_device/cgroup_inode只在当前实例上下文解释。配置instance_id应稳定且唯一；每次启动的随机run_id用于断开累计计数。旧日志继续支持单实例Markdown/JSON/SVG，但没有足够身份时拒绝混入多实例清单。
 
-参考[来源清单](../config/rc13-report-sources.json)，将各角色每日日志拷到独立目录，修改绝对文件路径；一天多文件可以列多个，不能重复文件/实例。清单最多16实例、总1024文件和4096小时分组，清单自身<=1MiB；符号链接/FIFO等输入拒绝。清单与--log-directory/--log-file/--config不能混用。它是一次性离线处理，**不会自动启动小时定时任务**。
+参考[来源清单](../config/rc13-report-sources.json)，将各角色每日日志拷到独立目录，修改绝对文件路径；一天多文件可以列多个，不能重复文件/实例。清单最多16实例、总1024文件和4096小时分组，每实例/cgroup每小时最多128个运行标识，清单自身<=1MiB；符号链接/FIFO等输入拒绝。清单与--log-directory/--log-file/--config不能混用。它是一次性离线处理，**不会自动启动小时定时任务**。
 
 ```sh
 ./containercacheguard report --manifest /reports/sources.json \
@@ -87,7 +87,7 @@ doctor就绪只代表输入齐全，可能仍因水位、预热或SLO暂停，�
 ./containercacheguard report --manifest /reports/sources.json --format json > /reports/detail.json
 ```
 
-SVG没有脚本、外链或服务，可直接浏览器打开/插入汇报。展示普通文件、匿名、共享内存采样峰值，节点余量采样最低、自身RSS/CPU峰值、模式/状态和缺口；柱长按每个小时归一，按数值比较，**不是按小时缺口补零的连续曲线**。匿名不等于缓存；共享页与file可能交叉，三项不可直接相加。未知、observe、暂停、重启/缺样均不能称为安全。详细建议字节、净下降、再次驻留和IO见JSON；不能把建议量当实际收益。
+SVG没有脚本、外链或服务，可直接浏览器打开/插入汇报。展示普通文件、匿名、共享内存采样峰值，节点余量采样最低、自身RSS/CPU峰值、模式/状态和缺口；柱长按每个小时归一，按数值比较，**不是按小时缺口补零的连续曲线**。匿名不等于缓存；共享页与file可能交叉，三项不可直接相加。未知、observe、暂停、重启/缺样均不能称为安全。完整运行标识及cgroup设备/inode、建议字节、净下降、再次驻留和IO见JSON；SVG每行悬停也可查看完整身份；不能把建议量当实际收益。
 
 ## 升级与回退
 
