@@ -6,6 +6,8 @@ import (
 )
 
 type Metrics struct {
+	NodeSignalError       string          `json:"node_signal_error,omitempty"`
+	BusinessSignalError   string          `json:"business_signal_error,omitempty"`
 	CgroupDevice          uint64          `json:"cgroup_device,omitempty"`
 	CgroupInode           uint64          `json:"cgroup_inode,omitempty"`
 	Node                  *NodeSignal     `json:"node_signal,omitempty"`

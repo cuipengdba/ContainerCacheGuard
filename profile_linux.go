@@ -5,10 +5,8 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"path/filepath"
 	"regexp"
@@ -85,39 +83,25 @@ func nodeStopThreshold(c Config, n *NodeSignal) int64 {
 	return max64(*n.HardBytes, *n.SoftBytes) + c.NodeSafetyMarginBytes
 }
 func decodeRegularJSON(path string, limit int64, out any) error {
-	f, err := safeOpen(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	id, err := statFile(f)
-	if err != nil || id.Mode&0170000 != 0100000 {
-		return errors.New("信号必须为真实普通文件")
-	}
-	if id.Size > limit {
-		return errors.New("信号超过大小限制")
-	}
-	d := json.NewDecoder(io.LimitReader(f, limit+1))
-	d.DisallowUnknownFields()
-	if err = d.Decode(out); err != nil {
-		return err
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return errors.New("信号包含多余数据")
-	}
-	return nil
+	return readRegularJSON(path, limit, out, true)
 }
 func nodeSignal(c Config, m *Metrics) {
 	if c.NodeSignal == "" {
 		return
 	}
 	var n NodeSignal
-	if err := decodeRegularJSON(c.NodeSignal, 16384, &n); err != nil || !validNodeSignal(c, &n, m.Time) {
-		m.Error = "kubelet node signal invalid/stale/source mismatch"
+	if err := decodeRegularJSON(c.NodeSignal, 16384, &n); err != nil {
+		m.NodeSignalError = "kubelet node signal unreadable/invalid JSON"
+		m.Error = m.NodeSignalError
 		return
 	}
 	m.Node = &n
+	if !validNodeSignal(c, &n, m.Time) {
+		m.NodeSignalError = "kubelet node signal invalid/stale/source mismatch"
+		m.Error = m.NodeSignalError
+		return
+	}
+
 }
 
 type externalGuard struct{ node, business time.Time }
@@ -128,11 +112,16 @@ func (g *externalGuard) check(m *Metrics) {
 		last *time.Time
 		name string
 	}{{m.BusinessTime, &g.business, "business"}, {nodeTime(m.Node), &g.node, "node"}} {
-		if v.time.IsZero() {
+		if (v.name == "node" && m.NodeSignalError != "") || (v.name == "business" && m.BusinessSignalError != "") || v.time.IsZero() {
 			continue
 		}
 		if !v.last.IsZero() && v.time.Before(*v.last) {
 			m.Error = fmt.Sprintf("%s signal time regressed", v.name)
+			if v.name == "node" {
+				m.NodeSignalError = m.Error
+			} else {
+				m.BusinessSignalError = m.Error
+			}
 			continue
 		}
 		*v.last = v.time

@@ -228,6 +228,13 @@ def main():
         bad=subprocess.run([binary,'run','--config',str(config),'--duration','1s'],capture_output=True,text=True,timeout=5)
         assert bad.returncode!=0
         checks.append('limited_output_requires_explicit_conservative_configuration')
+        cfg.update(protection_profile='strict',output_low_reuse=False,mode='auto',paths=[],business_signal=str(w/'unread-signal'),max_business_p99_ms=100,cgroup_path=str(w/'unread-cgroup'))
+        config.write_text(json.dumps(cfg))
+        checked=json.loads(run([binary,'check-config','--config',config]))
+        assert checked['valid'] and checked['protection_profile']=='strict'
+        checks.append('offline_check_config_never_collects_cgroup_or_signals')
+        assert 'signals' in sample and set(sample['signals'])=={'node','business','node_stop_bytes','node_headroom_above_stop_bytes'}
+        checks.append('status_includes_signal_health_and_unknown_node_headroom')
         report=dict(success=True,checks=checks,kernel=os.uname().release,arch=os.uname().machine,page_size=os.sysconf('SC_PAGE_SIZE'),initial_resident=initial['Resident'],kubernetes_eviction_test=False)
         if args.output:pathlib.Path(args.output).write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(report,indent=2))

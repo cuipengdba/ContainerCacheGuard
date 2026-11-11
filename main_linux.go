@@ -8,7 +8,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -27,6 +26,7 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
 
 用法：
   containercacheguard init-config --mode auto|paths > config.json
+  containercacheguard check-config --config config.json
   containercacheguard doctor [--config config.json] [--path /data] [--require-ready]
   containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json|svg]
   containercacheguard run --config config.json [--mode auto|paths] [--action observe|enforce]
@@ -172,6 +172,9 @@ func entry(args []string) error {
 	if e = c.validate(); e != nil {
 		return e
 	}
+	if cmd == "check-config" {
+		return output(map[string]any{"valid": true, "mode": c.Mode, "action": c.Action, "protection_profile": c.profile(), "instance_id": c.InstanceID, "scope": "仅离线配置校验；未读取数据目录、cgroup或外部信号"})
+	}
 	roots := normalizeRoots(c, c.Paths)
 	if c.Mode == "auto" {
 		roots = discoverRoots(c)
@@ -200,6 +203,7 @@ func entry(args []string) error {
 			nodeSignal(c, &m)
 			result["metrics"] = m
 			result["protection"] = assessProtection(c, m)
+			result["signals"] = signals(c, m, time.Now())
 			if m.Error != "" {
 				e = fmt.Errorf("metrics unavailable: %s", m.Error)
 			}
@@ -254,6 +258,7 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
+	Signals           SignalStatus      `json:"signals"`
 	InstanceID        string            `json:"instance_id,omitempty"`
 	RunID             string            `json:"run_id,omitempty"`
 	ProtectionProfile string            `json:"protection_profile,omitempty"`
@@ -282,51 +287,31 @@ func business(c Config, m *Metrics) {
 	if c.BusinessSignal == "" {
 		return
 	}
-	fd, e := syscall.Open(c.BusinessSignal, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-	if e != nil {
-		m.Error = "business signal unreadable"
-		return
-	}
-	f := os.NewFile(uintptr(fd), c.BusinessSignal)
-	defer f.Close()
-	id, e := statFile(f)
-	if e != nil || id.Mode&syscall.S_IFMT != syscall.S_IFREG {
-		m.Error = "business signal must be a regular file"
-		return
-	}
+	fail := func(issue string) { m.Error = issue; m.BusinessSignalError = issue }
 	var v struct {
 		Time     time.Time `json:"time"`
 		P99MS    *float64  `json:"p99_ms"`
 		Pause    bool      `json:"pause"`
 		SourceID string    `json:"source_id"`
 	}
-	body, readErr := io.ReadAll(io.LimitReader(f, 16385))
-	if readErr != nil || len(body) > 16384 {
-		m.Error = "business signal too large or unreadable"
-		return
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	e = decoder.Decode(&v)
-	var extra any
+	e := readRegularJSON(c.BusinessSignal, 16384, &v, false)
 	if e == nil {
-		if decoder.Decode(&extra) != io.EOF {
-			e = errors.New("trailing business signal data")
-		}
+		m.BusinessTime = v.Time
 	}
 	if e != nil || v.Time.IsZero() || time.Since(v.Time) > time.Duration(c.SignalMaxAgeSeconds)*time.Second || time.Until(v.Time) > time.Second {
-		m.Error = "business signal invalid/stale"
+		fail("business signal invalid/stale")
 		return
 	}
 	if c.MaxBusinessP99MS > 0 && v.P99MS == nil {
-		m.Error = "business signal p99_ms missing"
+		fail("business signal p99_ms missing")
 		return
 	}
 	if v.P99MS != nil && !finiteNonnegative(*v.P99MS) {
-		m.Error = "business signal p99_ms must be nonnegative"
+		fail("business signal p99_ms must be nonnegative")
 		return
 	}
 	if c.BusinessSourceID != "" && v.SourceID != c.BusinessSourceID {
-		m.Error = "business signal source mismatch"
+		fail("business signal source mismatch")
 		return
 	}
 	m.BusinessSourceID, m.BusinessTime = v.SourceID, v.Time
@@ -469,7 +454,9 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					oomBaseline, oomBaselineReady = m.OOMKill, true
 				}
 				s.Metrics = m
+				now = time.Now()
 				s.Time = now
+				s.Signals = signals(c, m, now)
 				protection := assessProtection(c, m)
 				s.Protection = &protection
 				s.Logging = logs.Status()
@@ -522,9 +509,11 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					logged := s
 					previousLog = &logged
 				}
-				age := time.Since(m.Time)
-				allow.Store(s.Decision.Allow && age >= 0 && age <= time.Duration(c.IntervalMS)*3*time.Millisecond)
+				allow.Store(s.Decision.Allow && adviceFresh(c, m, time.Now()))
 				nextSample = now.Add(time.Duration(c.IntervalMS) * time.Millisecond)
+			}
+			if !adviceFresh(c, s.Metrics, time.Now()) {
+				allow.Store(false)
 			}
 			// A single worker. Even if a syscall blocks, never spawn replacements.
 			if !now.Before(nextWork) && !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" && s.Decision.State != "CRITICAL" && s.Metrics.Error == "" &&
