@@ -169,7 +169,7 @@ func svgReport(r OfflineReport) string {
 		if len(state) > 150 {
 			state = state[:150] + "…（完整状态见JSON）"
 		}
-		text(30, y+125, 13, state)
+		text(30, y+138, 13, state)
 		b.WriteString("</g>")
 	}
 	text(28, height-24, 13, "仅文件范围释放建议；匿名/共享内存不由本工具清理。跨小时柱长各自归一化，请按数值比较。")

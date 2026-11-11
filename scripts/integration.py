@@ -216,6 +216,8 @@ def main():
         import xml.etree.ElementTree as ET
         assert ET.parse(svg).getroot().tag=='{http://www.w3.org/2000/svg}svg'
         assert 'lab/dbs' in svg.read_text() and '<script' not in svg.read_text()
+        if args.output:
+            pathlib.Path(args.output).with_suffix('.svg').write_text(svg.read_text())
         checks.append('offline_svg_is_standalone_valid_xml_without_web')
         sources[1]['instance_id']='wrong';manifest.write_text(json.dumps(dict(sources=sources)))
         bad=subprocess.run([binary,'report','--manifest',str(manifest)],capture_output=True,text=True,timeout=10)

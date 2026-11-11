@@ -7,6 +7,7 @@ __pycache__/
 # Generated CI evidence must not mark the source build as modified.
 /unit-results.log
 /integration-results.json
+/integration-results.svg
 /web-results.json
 /binary-info.txt
 /elf-header.txt
