@@ -235,6 +235,38 @@ def main():
         checks.append('offline_check_config_never_collects_cgroup_or_signals')
         assert 'signals' in sample and set(sample['signals'])=={'node','business','node_stop_bytes','node_headroom_above_stop_bytes'}
         checks.append('status_includes_signal_health_and_unknown_node_headroom')
+        pairs=[]
+        for phase,action,mb in [('baseline','observe',100),('candidate','enforce',50)]:
+            begin=at+(datetime.timedelta(hours=1) if phase=='candidate' else datetime.timedelta())
+            path=w/(phase+'-telemetry.jsonl');lines=[]
+            for i in range(3):
+                item=json.loads(records[i]);stamp=(begin+datetime.timedelta(seconds=i*10)).isoformat()
+                item.update(time=stamp,instance_id='ci/dbsbackup',protection_profile='limited-output',action=action,decision=dict(state='OBSERVE' if action=='observe' else 'CONTROL',allow=action=='enforce'))
+                m=item['metrics'];m.update(time=stamp,error='',file_bytes=mb*1024**2,shmem_bytes=0,self_cpu_percent=.5,self_rss_bytes=20*1024**2,io_bytes=i*1000,business_source_id='probe-dbs',business_time=stamp,business_p99_ms=1)
+                m['available_metrics'].update(file_bytes=True,shmem_bytes=True,self_cpu_percent=True,self_rss_bytes=True,io_bytes=True)
+                m['node_signal']=dict(schema_version=1,source_id='node-collector',node_id='node-uid',time=stamp,memory_available_bytes=3*1024**3,hard_available_bytes=1024**3,soft_available_bytes=0,soft_grace_seconds=0,memory_pressure=False)
+                item['signals']=dict(node=dict(state='ready'),business=dict(state='ready'))
+                item['counters'].update(advice_bytes=i*1024 if action=='enforce' else 0,observed_net_reduction_bytes=0,observed_reappeared_bytes=0,errors=0)
+                item['protection']=dict(ready=True,missing_metrics=[])
+                lines.append(json.dumps(item))
+            path.write_text('\n'.join(lines)+'\n')
+            dest=w/(phase+'-telemetry.json')
+            run([binary,'report','--log-file',path,'--from',begin.isoformat(),'--until',(begin+datetime.timedelta(seconds=21)).isoformat(),'--format','json','--output',dest])
+            pairs.append(dest)
+        compared=json.loads(run([binary,'compare','--baseline',pairs[0],'--candidate',pairs[1],'--require-thresholds']))
+        assert compared['status']=='telemetry_thresholds_met' and len(compared['instances'][0]['checks'])==7
+        checks.append('comparison_uses_actual_cli_reports_with_identity_and_coverage')
+        value=json.loads(pairs[1].read_text());value['hours'][0]['business_p99_peak_ms']=200;pairs[1].write_text(json.dumps(value))
+        bad=subprocess.run([binary,'compare','--baseline',str(pairs[0]),'--candidate',str(pairs[1]),'--require-thresholds'],capture_output=True,text=True,timeout=10)
+        assert bad.returncode!=0 and json.loads(bad.stdout)['status']=='threshold_exceeded'
+        checks.append('comparison_refuses_latency_regression_even_with_cache_improvement')
+        text=run([binary,'compare','--baseline',pairs[0],'--candidate',pairs[1],'--format','markdown'])
+        assert '离线对比' in text and 'threshold_exceeded' in text
+        checks.append('comparison_markdown_explains_limits_without_production_claim')
+        for flags in [['--min-coverage','NaN'],['--max-cpu-average-percent','Inf']]:
+            bad=subprocess.run([binary,'compare','--baseline',str(pairs[0]),'--candidate',str(pairs[1]),*flags],capture_output=True,text=True,timeout=5)
+            assert bad.returncode!=0
+        checks.append('comparison_rejects_nonfinite_thresholds')
         report=dict(success=True,checks=checks,kernel=os.uname().release,arch=os.uname().machine,page_size=os.sysconf('SC_PAGE_SIZE'),initial_resident=initial['Resident'],kubernetes_eviction_test=False)
         if args.output:pathlib.Path(args.output).write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(report,indent=2))

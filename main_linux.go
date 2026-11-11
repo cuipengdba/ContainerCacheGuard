@@ -26,6 +26,7 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
 
 用法：
   containercacheguard init-config --mode auto|paths > config.json
+  containercacheguard compare --baseline baseline.json --candidate candidate.json [--format json|markdown]
   containercacheguard check-config --config config.json
   containercacheguard doctor [--config config.json] [--path /data] [--require-ready]
   containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json|svg]
@@ -73,6 +74,9 @@ func entry(args []string) error {
 		return nil
 	}
 	cmd := args[0]
+	if cmd == "compare" {
+		return compareCommand(args[1:])
+	}
 	if cmd == "report" {
 		return reportCommand(args[1:])
 	}

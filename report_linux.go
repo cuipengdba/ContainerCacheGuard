@@ -22,38 +22,53 @@ const reportLineLimit = 4 * 1024 * 1024
 const reportBucketLimit = 4096
 
 type HourReport struct {
-	InstanceID          string             `json:"instance_id,omitempty"`
-	RunIDs              []string           `json:"run_ids,omitempty"`
-	CgroupDevice        uint64             `json:"cgroup_device,omitempty"`
-	CgroupInode         uint64             `json:"cgroup_inode,omitempty"`
-	NodeAvailableMin    *int64             `json:"kubelet_memory_available_min_bytes"`
-	NodePressureSamples int                `json:"node_memory_pressure_samples"`
-	Hour                string             `json:"hour"`
-	Cgroup              string             `json:"cgroup"`
-	CgroupVersion       int                `json:"cgroup_version"`
-	Samples             int                `json:"samples"`
-	UsableMemorySamples int                `json:"usable_memory_samples"`
-	Actions             map[string]int     `json:"action_samples"`
-	States              map[string]int     `json:"state_samples"`
-	MissingGuards       map[string]int     `json:"missing_guard_samples"`
-	ObservedSeconds     float64            `json:"observed_interval_seconds"`
-	AllowedSeconds      float64            `json:"advice_allowed_interval_seconds"`
-	StateSeconds        map[string]float64 `json:"state_interval_seconds"`
-	UnbridgedIntervals  int                `json:"unbridged_intervals"`
-	CounterIntervals    int                `json:"valid_counter_intervals"`
-	AdviceBytes         int64              `json:"advice_bytes_delta"`
-	NetReductionBytes   int64              `json:"observed_net_reduction_bytes_delta"`
-	ReappearedBytes     int64              `json:"observed_reappeared_bytes_delta"`
-	Errors              uint64             `json:"errors_delta"`
-	OrdinaryPeak        *int64             `json:"ordinary_file_peak_bytes"`
-	AnonPeak            *int64             `json:"anon_peak_bytes"`
-	ShmemPeak           *int64             `json:"shmem_peak_bytes"`
-	SelfRSSPeak         *int64             `json:"self_rss_peak_bytes"`
-	HostAvailableMin    *int64             `json:"host_available_min_bytes"`
-	IOPeak              *float64           `json:"io_peak_bytes_per_second"`
-	CPUPeak             *float64           `json:"self_cpu_peak_percent"`
+	BusinessSources        []string           `json:"business_source_ids,omitempty"`
+	FileByteSeconds        float64            `json:"ordinary_file_byte_seconds"`
+	FileCoveredSeconds     float64            `json:"ordinary_file_covered_seconds"`
+	CPUPercentSeconds      float64            `json:"self_cpu_percent_seconds"`
+	CPUCoveredSeconds      float64            `json:"self_cpu_covered_seconds"`
+	IOCoveredSeconds       float64            `json:"io_covered_seconds"`
+	IOBytesDelta           int64              `json:"io_bytes_delta"`
+	BusinessCoveredSeconds float64            `json:"business_covered_seconds"`
+	NodeCoveredSeconds     float64            `json:"node_covered_seconds"`
+	BusinessP99Peak        *float64           `json:"business_p99_peak_ms"`
+	NodeIDs                []string           `json:"node_ids,omitempty"`
+	Profiles               map[string]int     `json:"profile_samples"`
+	InstanceID             string             `json:"instance_id,omitempty"`
+	RunIDs                 []string           `json:"run_ids,omitempty"`
+	CgroupDevice           uint64             `json:"cgroup_device,omitempty"`
+	CgroupInode            uint64             `json:"cgroup_inode,omitempty"`
+	NodeAvailableMin       *int64             `json:"kubelet_memory_available_min_bytes"`
+	NodePressureSamples    int                `json:"node_memory_pressure_samples"`
+	Hour                   string             `json:"hour"`
+	Cgroup                 string             `json:"cgroup"`
+	CgroupVersion          int                `json:"cgroup_version"`
+	Samples                int                `json:"samples"`
+	UsableMemorySamples    int                `json:"usable_memory_samples"`
+	Actions                map[string]int     `json:"action_samples"`
+	States                 map[string]int     `json:"state_samples"`
+	MissingGuards          map[string]int     `json:"missing_guard_samples"`
+	ObservedSeconds        float64            `json:"observed_interval_seconds"`
+	AllowedSeconds         float64            `json:"advice_allowed_interval_seconds"`
+	StateSeconds           map[string]float64 `json:"state_interval_seconds"`
+	UnbridgedIntervals     int                `json:"unbridged_intervals"`
+	CounterIntervals       int                `json:"valid_counter_intervals"`
+	AdviceBytes            int64              `json:"advice_bytes_delta"`
+	NetReductionBytes      int64              `json:"observed_net_reduction_bytes_delta"`
+	ReappearedBytes        int64              `json:"observed_reappeared_bytes_delta"`
+	Errors                 uint64             `json:"errors_delta"`
+	OrdinaryPeak           *int64             `json:"ordinary_file_peak_bytes"`
+	AnonPeak               *int64             `json:"anon_peak_bytes"`
+	ShmemPeak              *int64             `json:"shmem_peak_bytes"`
+	SelfRSSPeak            *int64             `json:"self_rss_peak_bytes"`
+	HostAvailableMin       *int64             `json:"host_available_min_bytes"`
+	IOPeak                 *float64           `json:"io_peak_bytes_per_second"`
+	CPUPeak                *float64           `json:"self_cpu_peak_percent"`
 }
 type OfflineReport struct {
+	SchemaVersion int           `json:"schema_version"`
+	WindowStart   time.Time     `json:"window_start"`
+	WindowEnd     time.Time     `json:"window_end"`
 	Version       string        `json:"reporter_version"`
 	Instance      string        `json:"instance"`
 	Timezone      string        `json:"timezone"`
@@ -82,7 +97,7 @@ type reportAggregator struct {
 
 func newReportAggregator(o reportOptions) *reportAggregator {
 	return &reportAggregator{options: o, buckets: map[string]*HourReport{}, previous: map[string]Status{}, generations: map[string]uint64{}, report: OfflineReport{
-		Version: version, Instance: o.instance, Timezone: o.location.String(), MaxGapSeconds: o.maxGap.Seconds(), Hours: []*HourReport{},
+		SchemaVersion: 2, WindowStart: o.from, WindowEnd: o.until, Version: version, Instance: o.instance, Timezone: o.location.String(), MaxGapSeconds: o.maxGap.Seconds(), Hours: []*HourReport{},
 		Notes: []string{
 			"仅包含有日志或有效短间隔的小时；没有记录的小时不能视为健康。峰值是日志采样峰值，不是连续真实峰值。",
 			"短间隔秒数按前一条日志状态保持到下一条估算；超出max-gap、进程/版本变化、重复和乱序不补算。",
@@ -105,7 +120,7 @@ func (a *reportAggregator) bucket(s Status, at time.Time) (*HourReport, error) {
 	if len(a.buckets) >= reportBucketLimit {
 		return nil, errors.New("小时分组超过4096，请用--from/--until缩小范围")
 	}
-	h := &HourReport{InstanceID: s.InstanceID, CgroupDevice: s.Metrics.CgroupDevice, CgroupInode: s.Metrics.CgroupInode, Hour: hour, Cgroup: s.Metrics.Cgroup, CgroupVersion: s.Metrics.Version, Actions: map[string]int{}, States: map[string]int{}, MissingGuards: map[string]int{}, StateSeconds: map[string]float64{}}
+	h := &HourReport{Profiles: map[string]int{}, InstanceID: s.InstanceID, CgroupDevice: s.Metrics.CgroupDevice, CgroupInode: s.Metrics.CgroupInode, Hour: hour, Cgroup: s.Metrics.Cgroup, CgroupVersion: s.Metrics.Version, Actions: map[string]int{}, States: map[string]int{}, MissingGuards: map[string]int{}, StateSeconds: map[string]float64{}}
 	a.buckets[key] = h
 	a.report.Hours = append(a.report.Hours, h)
 	return h, nil
@@ -184,6 +199,41 @@ func (a *reportAggregator) add(s Status) error {
 			h.RunIDs = append(h.RunIDs, s.RunID)
 		}
 	}
+	if s.ProtectionProfile != "" {
+		if s.ProtectionProfile != "strict" && s.ProtectionProfile != "limited-output" {
+			return errors.New("未知保护profile")
+		}
+		h.Profiles[s.ProtectionProfile]++
+	}
+	if businessSample(s) {
+		peakFloat(&h.BusinessP99Peak, *s.Metrics.BusinessP99)
+		found := false
+		for _, id := range h.BusinessSources {
+			if id == s.Metrics.BusinessSourceID {
+				found = true
+			}
+		}
+		if !found {
+			if len(h.BusinessSources) >= 16 {
+				return errors.New("每小时业务来源超过16")
+			}
+			h.BusinessSources = append(h.BusinessSources, s.Metrics.BusinessSourceID)
+		}
+	}
+	if nodeSample(s) {
+		found := false
+		for _, id := range h.NodeIDs {
+			if id == s.Metrics.Node.NodeID {
+				found = true
+			}
+		}
+		if !found {
+			if len(h.NodeIDs) >= 16 {
+				return errors.New("每小时节点身份超过16")
+			}
+			h.NodeIDs = append(h.NodeIDs, s.Metrics.Node.NodeID)
+		}
+	}
 	h.Samples++
 	h.Actions[s.Action]++
 	state := reportState(s.Decision.State)
@@ -247,11 +297,26 @@ func (a *reportAggregator) add(s Status) error {
 				}
 				seconds := end.Sub(cur).Seconds()
 				part.ObservedSeconds += seconds
+				if e := coverageInterval(part, prev, s, seconds); e != nil {
+					return e
+				}
+				if logSampleUsable(prev) && logSampleUsable(s) && prev.Metrics.Available["io_bytes"] && s.Metrics.Available["io_bytes"] && prev.Metrics.IOBytes >= 0 && s.Metrics.IOBytes >= prev.Metrics.IOBytes {
+					// Proportionally split a measured counter delta, without splitting bytes:
+					// keep the exact delta in the ending bucket and seconds in each hour.
+					part.IOCoveredSeconds += seconds
+				}
 				part.StateSeconds[reportState(prev.Decision.State)] += seconds
 				if prev.Action == "enforce" && prev.Decision.Allow {
 					part.AllowedSeconds += seconds
 				}
 				cur = end
+			}
+			if logSampleUsable(prev) && logSampleUsable(s) && prev.Metrics.Available["io_bytes"] && s.Metrics.Available["io_bytes"] && prev.Metrics.IOBytes >= 0 && s.Metrics.IOBytes >= prev.Metrics.IOBytes {
+				delta := s.Metrics.IOBytes - prev.Metrics.IOBytes
+				if h.IOBytesDelta > math.MaxInt64-delta {
+					return errors.New("IO累计计数溢出")
+				}
+				h.IOBytesDelta += delta
 			}
 			x, y := s.Counters, prev.Counters
 			if x.AdviceBytes >= y.AdviceBytes && x.NetReductionBytes >= y.NetReductionBytes && x.ReappearedBytes >= y.ReappearedBytes && x.Errors >= y.Errors {
@@ -402,6 +467,19 @@ func markdownReport(r OfflineReport) string {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %.2f | %.2f | %.2f | %.2f | %.2f | %s / %s |\n", h.Hour+" / "+markdownCell(h.InstanceID), integer(h.OrdinaryPeak), integer(h.AnonPeak), integer(h.HostAvailableMin), h.ObservedSeconds, h.AllowedSeconds, float64(h.AdviceBytes)/float64(MiB), float64(h.NetReductionBytes)/float64(MiB), float64(h.ReappearedBytes)/float64(MiB), markdownCell(string(action)), markdownCell(string(state)))
 	}
 	b.WriteString("\n")
+	b.WriteString("| 小时 / 实例 | 普通文件时间加权均值 MiB | 文件页覆盖秒 | 业务p99采样最大 ms | IO统计字节 |\n| --- | ---: | ---: | ---: | ---: |\n")
+	for _, h := range r.Hours {
+		avg := "未知"
+		if h.FileCoveredSeconds > 0 {
+			avg = fmt.Sprintf("%.2f", h.FileByteSeconds/h.FileCoveredSeconds/float64(MiB))
+		}
+		p99 := "未知"
+		if h.BusinessP99Peak != nil {
+			p99 = fmt.Sprintf("%.2f", *h.BusinessP99Peak)
+		}
+		fmt.Fprintf(&b, "| %s / %s | %s | %.2f | %s | %d |\n", h.Hour, markdownCell(h.InstanceID), avg, h.FileCoveredSeconds, p99, h.IOBytesDelta)
+	}
+	b.WriteString("\n时间加权值为相邻有效日志间保持前值的估算；IO字节归入区间结束小时，跨小时的字节与秒须合计再求速率。\n\n")
 	for _, h := range r.Hours {
 		fmt.Fprintf(&b, "- %s，cgroup：%s；保护缺项样本：%s；未衔接间隔：%d。\n", h.Hour, markdownCell(h.Cgroup), jsonText(h.MissingGuards), h.UnbridgedIntervals)
 	}
