@@ -245,6 +245,8 @@ func kernelRisk(c Config, s, previous KernelSample) (risk, healthy bool, deficit
 			dt := s.Metrics.Time.Sub(previous.Metrics.Time).Seconds()
 			if p.Path == l.Path && dt > 0 && dt <= 3 && l.Current > p.Current && float64(h) <= float64(l.Current-p.Current)/dt*float64(k.PredictSeconds) {
 				hit = true
+				projected := int64(math.Min(float64(l.Current-p.Current)/dt*float64(k.PredictSeconds), float64(1<<40)))
+				d = max64(d, k.MinHeadroomBytes-h+projected)
 			}
 		}
 		if hit {

@@ -223,6 +223,7 @@ func TestKernelJournalPersistsReservationAndRestartsUnknown(t *testing.T) {
 	target := &kernelTarget{c: c, machine: kernelMachine{Status: r}}
 	a := &kernelAgent{targets: []*kernelTarget{target}, readSample: func(*kernelTarget) KernelSample { return sample }, boot: "boot-test", started: now.Add(-time.Hour), lastEvent: map[string]string{}}
 	c.LogDirectory = t.TempDir()
+	os.Chmod(c.LogDirectory, 0700)
 	c.StateFile = filepath.Join(c.LogDirectory, "status.json")
 	var err error
 	a.logs, err = newDailyLogger(c, io.Discard, time.Now)

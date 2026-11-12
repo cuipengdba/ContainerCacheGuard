@@ -64,6 +64,7 @@ type kernelTarget struct {
 	heartbeatTime time.Time
 	external      externalGuard
 	prepared      time.Time
+	lastSignal    KernelSignal
 }
 type kernelMessage struct {
 	request kernelHeartbeat
@@ -427,8 +428,10 @@ func (a *kernelAgent) tick(now time.Time) error {
 	for _, t := range a.targets {
 		old := t.sample
 		t.sample = a.read(t)
-		if kernelSignalRegressed(t.sample.Signal, old.Signal) {
+		if kernelSignalRegressed(t.sample.Signal, t.lastSignal) {
 			t.sample.Error = "kernel_signal_clock_or_version_regression"
+		} else if t.sample.Error == "" && t.sample.Signal.Schema == 2 && t.sample.Signal.SourceID == t.c.KernelReclaim.SignalSourceID && t.sample.Signal.BootID == a.boot {
+			t.lastSignal = t.sample.Signal
 		}
 		m := &t.machine
 		s := &m.Status
