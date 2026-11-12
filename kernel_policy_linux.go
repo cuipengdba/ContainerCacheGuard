@@ -191,6 +191,9 @@ func kernelGuard(c Config, s KernelSample, boot string, now time.Time) string {
 	// of the old memory-critical pause (which is this backend's trigger).
 	guardConfig := c
 	guardConfig.NodeSignal = ""
+	if k.GuardProfile == "no-psi-guarded" && m.MemoryPSI == nil && !m.Available["memory_psi_interface_absent"] {
+		return "memory_psi_missing_not_confirmed_absent"
+	}
 	if k.GuardProfile == "no-psi-guarded" && m.IOPSI == nil {
 		if !m.Available["io_psi_interface_absent"] {
 			return "psi_missing_not_confirmed_absent"

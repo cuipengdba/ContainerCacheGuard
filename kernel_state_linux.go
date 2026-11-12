@@ -69,6 +69,35 @@ func restoreKernelStatus(s KernelStatus) KernelStatus {
 	return s
 }
 
+func chooseKernelTarget(targets []*kernelTarget) *kernelTarget {
+	var chosen *kernelTarget
+	for _, t := range targets {
+		s := t.machine.Status
+		if s.Phase != "PREPARING" || s.Request <= 0 || s.Episode == "" || t.heartbeat.AckEpisode != s.Episode || !t.heartbeat.FileIdle {
+			continue
+		}
+		if chosen == nil || t.registration.Priority < chosen.registration.Priority {
+			chosen = t
+		}
+	}
+	return chosen
+}
+
+func (a *kernelAgent) supervise(now time.Time) error {
+	if a.busy == nil {
+		return nil
+	}
+	s := &a.busy.machine.Status
+	if now.Sub(s.Started) > time.Duration(a.busy.c.KernelReclaim.CallWatchdogMS)*time.Millisecond && !s.Watchdog {
+		s.Watchdog = true
+		s.Reason = "watchdog_expired_inflight_unknown"
+		// Do not clear busy here. The kernel may not have returned yet.
+		_ = a.child.Process.Kill()
+		return a.save()
+	}
+	return nil
+}
+
 // Unlike os.File.Write, this adapter cannot retry a kernel control write on
 // EINTR. EAGAIN can already include partial reclaim, so it is terminal too.
 func kernelWriteOnce(fd int, body []byte, write func(int, []byte) (int, error)) error {

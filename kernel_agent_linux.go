@@ -442,13 +442,8 @@ func (a *kernelAgent) tick(now time.Time) error {
 		heartbeatOK := freshKernel(t.heartbeatTime, now, 3*time.Second) && t.heartbeat.Action == "enforce" && !t.heartbeat.Paused && t.c.Action == "enforce"
 		if s.Attempted {
 			if a.busy == t {
-				if now.Sub(s.Started) > time.Duration(t.c.KernelReclaim.CallWatchdogMS)*time.Millisecond && !s.Watchdog {
-					s.Watchdog = true
-					s.Reason = "watchdog_expired_inflight_unknown"
-					_ = a.child.Process.Kill()
-					if err := a.save(); err != nil {
-						return err
-					}
+				if err := a.supervise(now); err != nil {
+					return err
 				}
 				continue
 			}
@@ -495,7 +490,7 @@ func (a *kernelAgent) tick(now time.Time) error {
 		}
 		if reason != "" || !heartbeatOK || now.Sub(a.started) < time.Duration(t.c.WarmupSeconds)*time.Second {
 			m.confirmations = 0
-			s.HoldFile = false
+			s.HoldFile = reason == "oom_history_unresolved" || reason == "ancestor_oom_history_unresolved"
 			s.Phase = "UNAVAILABLE"
 			s.Reason = reason
 			if reason == "" {
@@ -535,16 +530,7 @@ func (a *kernelAgent) tick(now time.Time) error {
 		}
 	}
 	if a.busy == nil {
-		var chosen *kernelTarget
-		for _, t := range a.targets {
-			s := t.machine.Status
-			if s.Phase != "PREPARING" || s.Request == 0 || t.heartbeat.AckEpisode != s.Episode || !t.heartbeat.FileIdle {
-				continue
-			}
-			if chosen == nil || t.registration.Priority < chosen.registration.Priority {
-				chosen = t
-			}
-		}
+		chosen := chooseKernelTarget(a.targets)
 		if chosen != nil {
 			// Fresh authorization after waiting: leaf identity and all gates rechecked.
 			if err := kernelLeaf(chosen.registration.Cgroup); err != nil {

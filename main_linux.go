@@ -223,6 +223,10 @@ func entry(args []string) error {
 			if c.KernelReclaim.Enabled {
 				boot, bootErr := readBootID()
 				ks := kernelRead(c, r, boot)
+				if *requireReady {
+					time.Sleep(time.Duration(c.IntervalMS) * time.Millisecond)
+					ks = kernelRead(c, r, boot)
+				}
 				reason := kernelGuard(c, ks, boot, time.Now())
 				if bootErr != nil {
 					reason = "boot_id_unavailable"

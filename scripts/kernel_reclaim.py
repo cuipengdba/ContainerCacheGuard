@@ -34,6 +34,9 @@ def holder(cgroup,path,ready):
 
 def main():
     if len(sys.argv)>1 and sys.argv[1]=='--holder': return holder(*sys.argv[2:])
+    if len(sys.argv)>1 and sys.argv[1]=='--join-exec':
+        (pathlib.Path(sys.argv[2])/'cgroup.procs').write_text(str(os.getpid()))
+        os.execv(sys.argv[3],sys.argv[3:])
     ap=argparse.ArgumentParser();ap.add_argument('binary');ap.add_argument('--output',required=True);a=ap.parse_args()
     assert os.geteuid()==0,'ephemeral root runner required'
     binary=str(pathlib.Path(a.binary).resolve());out=pathlib.Path(a.output).resolve()
@@ -111,9 +114,8 @@ def main():
                 f=(w/('agent-'+str(len(procs))+'.log')).open('w');loghandles.append(f)
                 p=subprocess.Popen([binary,'reclaim-agent','--config',str(agentcfg)],stdout=f,stderr=subprocess.STDOUT);procs.append(p);return p
             agent=start_agent()
-            def join(): (cg/'cgroup.procs').write_text(str(os.getpid()))
             f=(w/'client-console.log').open('w');loghandles.append(f)
-            client=subprocess.Popen([binary,'run','--config',str(config)],preexec_fn=join,stdout=f,stderr=subprocess.STDOUT);procs.append(client)
+            client=subprocess.Popen([sys.executable,__file__,'--join-exec',str(cg),binary,'run','--config',str(config)],stdout=f,stderr=subprocess.STDOUT);procs.append(client)
             samples=[];finished=None;restarted=False;deadline=time.monotonic()+210
             while time.monotonic()<deadline:
                 assert agent.poll() is None, 'agent exited: '+''.join(p.read_text()[-10000:] for p in w.glob('agent-*.log'))

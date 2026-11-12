@@ -493,6 +493,10 @@ func (r *metricReader) sample(c Config) Metrics {
 		m.Available["io_psi_interface_absent"] = errors.Is(psiErr, os.ErrNotExist)
 	}
 	m.MemoryPSI = psi(filepath.Join(r.path, "memory.pressure"))
+	if m.MemoryPSI == nil {
+		_, psiErr := os.Stat(filepath.Join(r.path, "memory.pressure"))
+		m.Available["memory_psi_interface_absent"] = errors.Is(psiErr, os.ErrNotExist)
+	}
 	node := values("/proc/meminfo")
 	m.NodeAvailable = node["MemAvailable"] * 1024
 	_, m.Available["host_memavailable_bytes"] = node["MemAvailable"]

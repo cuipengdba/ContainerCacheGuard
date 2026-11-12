@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -122,6 +123,7 @@ func TestKernelNoPSIRequiresConfirmedAbsenceAndFreshAlternatives(t *testing.T) {
 		t.Fatal("unconfirmed absence")
 	}
 	s.Metrics.Available["io_psi_interface_absent"] = true
+	s.Metrics.Available["memory_psi_interface_absent"] = true
 	if r := kernelGuard(c, s, "boot-test", s.Metrics.Time); r != "" {
 		t.Fatal(r)
 	}
@@ -358,5 +360,145 @@ func TestKernelDisabledHasNoClientAndOutputIsBounded(t *testing.T) {
 	b.Write([]byte(strings.Repeat("x", 10000)))
 	if b.Len() != 4096 {
 		t.Fatal(b.Len())
+	}
+}
+
+func TestKernelFourTargetsPrioritizeBackupsOnlyAfterWorkerAck(t *testing.T) {
+	var targets []*kernelTarget
+	for i, name := range []string{"dbs", "hisdbs", "dbsbackup", "hisdbsbackup"} {
+		priority := 10 + i
+		if i >= 2 {
+			priority = i - 2
+		}
+		targets = append(targets, &kernelTarget{registration: kernelRegistration{Name: name, Priority: priority}, machine: kernelMachine{Status: KernelStatus{Phase: "PREPARING", Episode: name, Request: 128 * MiB}}, heartbeat: kernelHeartbeat{AckEpisode: name, FileIdle: true}})
+	}
+	if got := chooseKernelTarget(targets); got != targets[2] {
+		t.Fatal("backup priority")
+	}
+	targets[2].heartbeat.FileIdle = false
+	if got := chooseKernelTarget(targets); got != targets[3] {
+		t.Fatal("active worker admitted")
+	}
+	targets[3].heartbeat.AckEpisode = "old-episode"
+	if got := chooseKernelTarget(targets); got != targets[0] {
+		t.Fatal("old ack admitted")
+	}
+}
+
+func testKernelAgent(t *testing.T, c Config, sample *KernelSample) (*kernelAgent, *kernelTarget) {
+	t.Helper()
+	dir := t.TempDir()
+	os.Chmod(dir, 0700)
+	c.LogDirectory = filepath.Join(dir, "logs")
+	c.StateFile = filepath.Join(dir, "status.json")
+	logs, e := newDailyLogger(c, io.Discard, time.Now)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { logs.Close() })
+	r := &metricReader{id: identity{Dev: 1, Ino: 2}}
+	target := &kernelTarget{c: c, r: r, registration: kernelRegistration{Name: "hisdbs"}}
+	a := &kernelAgent{targets: []*kernelTarget{target}, readSample: func(*kernelTarget) KernelSample { return *sample }, boot: "boot-test", started: time.Now().Add(-time.Hour), lastEvent: map[string]string{}, journal: kernelJournal{Schema: 1, Targets: map[string]KernelStatus{}}, journalPath: filepath.Join(dir, "journal.json"), logs: logs}
+	target.machine.Status = KernelStatus{TargetIdentity: kernelKey(a.boot, r)}
+	return a, target
+}
+
+func TestKernelRearmRequiresBothSustainedHealthAndEpisodeInterval(t *testing.T) {
+	c, sample := kernelFixture()
+	now := sample.Metrics.Time
+	s0 := sample
+	s0.Levels = nil
+	sample = s0
+	a, target := testKernelAgent(t, c, &sample)
+	target.machine.Status = KernelStatus{Phase: "WAIT_RECOVERY", TargetIdentity: kernelKey(a.boot, target.r), Episode: "one", Attempted: true, Started: now.Add(-200 * time.Second), Finished: now.Add(-121 * time.Second), Request: 128 * MiB, Before: &s0}
+	setTime := func(sec int, unhealthy bool) {
+		ts := now.Add(time.Duration(sec) * time.Second)
+		sample.Metrics.Time = ts
+		sample.Metrics.BusinessTime = ts
+		sample.Signal.Time = ts
+		sample.Signal.BusinessTime = ts
+		sample.Signal.Constraints[0].Time = ts
+		sample.Metrics.BusinessPause = unhealthy
+		if e := a.tick(ts); e != nil {
+			t.Fatal(e)
+		}
+	}
+	setTime(0, false)
+	setTime(50, true)
+	setTime(60, false)
+	setTime(110, false)
+	if !target.machine.Status.Attempted {
+		t.Fatal("rearmed before sustained health")
+	}
+	setTime(120, false)
+	if target.machine.Status.Attempted || target.machine.Status.Phase != "ARMED" || len(a.journal.Targets) != 0 {
+		t.Fatal("did not rearm after both conditions")
+	}
+	if len(s0.Levels) != 0 {
+		t.Fatal("fixture mutated")
+	}
+}
+
+func TestKernelWatchdogRetainsBusyUntilActualExit(t *testing.T) {
+	c, sample := kernelFixture()
+	a, target := testKernelAgent(t, c, &sample)
+	target.machine.Status = KernelStatus{Phase: "INFLIGHT", TargetIdentity: kernelKey(a.boot, target.r), Episode: "blocked", Attempted: true, Started: time.Now().Add(-10 * time.Second), Request: 128 * MiB, Before: &sample}
+	cmd := exec.Command("sleep", "10")
+	if e := cmd.Start(); e != nil {
+		t.Fatal(e)
+	}
+	defer cmd.Process.Kill()
+	a.busy = target
+	a.child = cmd
+	begin := time.Now()
+	if e := a.supervise(time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(begin) > time.Second {
+		t.Fatal("watchdog blocked sampler")
+	}
+	if a.busy != target || !target.machine.Status.Watchdog {
+		t.Fatal("watchdog incorrectly cleared in-flight scope")
+	}
+	if e := cmd.Wait(); e == nil {
+		t.Fatal("test child was not terminated")
+	}
+	if e := a.supervise(time.Now()); e != nil {
+		t.Fatal("watchdog retried action")
+	}
+	if r := restoreKernelStatus(target.machine.Status); r.Phase != "UNKNOWN" || !r.Attempted {
+		t.Fatal("lost uncertain attempt")
+	}
+}
+
+func TestKernelHistoryBlocksFileAdviceAndSnapshotDoesNotDrift(t *testing.T) {
+	c, sample := kernelFixture()
+	a, target := testKernelAgent(t, c, &sample)
+	sample.Metrics.OOMKill = 3
+	if e := a.tick(sample.Metrics.Time); e != nil {
+		t.Fatal(e)
+	}
+	if !target.machine.Status.HoldFile || target.machine.Status.Reason != "oom_history_unresolved" {
+		t.Fatal("historical OOM cleared")
+	}
+	sample.Metrics.OOMKill = 0
+	target.sample = sample
+	target.machine.Status.Request = 128 * MiB
+	target.machine.Status.Episode = "before-copy"
+	target.registration.Cgroup = "/path-that-does-not-exist-ccg-test"
+	if e := a.reserve(target, time.Now()); e == nil {
+		t.Fatal("unexpected spawn against absent cgroup")
+	}
+	original := target.machine.Status.Before.Metrics.Current
+	target.sample = KernelSample{}
+	if target.machine.Status.Before.Metrics.Current != original {
+		t.Fatal("pre-reclaim snapshot drifted")
+	}
+	var j kernelJournal
+	if e := trustedKernelJSON(a.journalPath, &j); e != nil {
+		t.Fatal(e)
+	}
+	if len(j.Targets) != 1 || len(j.Budget) != 1 {
+		t.Fatal("reservation missing before spawn")
 	}
 }
