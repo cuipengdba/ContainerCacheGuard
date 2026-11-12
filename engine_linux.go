@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -236,17 +235,8 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 	}
 	// Vendor PostgreSQL data files can be mode 0700. In an explicit paths
 	// scope, an execute bit is not evidence that a file is program code.
-	if id.Mode&syscall.S_IFMT != syscall.S_IFREG || id.Size < int64(os.Getpagesize()) {
-		e.auditSkip(path, "not_regular_or_subpage", &id)
-		return
-	}
-	if e.c.Mode == "auto" && id.Mode&0111 != 0 && !e.c.executableData(path) {
-		e.auditSkip(path, "execute_bit_auto", &id)
-		return
-	}
-	base := filepath.Base(path)
-	if strings.Contains(base, ".so") || strings.HasSuffix(base, ".a") {
-		e.auditSkip(path, "library_name", &id)
+	if reason := e.c.fileSkipReason(path, id); reason != "" {
+		e.auditSkip(path, reason, &id)
 		return
 	}
 	if old := e.known[path]; old != nil {
@@ -399,6 +389,12 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	id, err := statFile(f)
 	if err == nil {
 		e.auditOpen(r.Path, id)
+	}
+	if err == nil && e.c.fileSkipReason(r.Path, id) != "" {
+		e.auditSkip(r.Path, e.c.fileSkipReason(r.Path, id), &id)
+		e.candidateEvent(r, "scope_changed_terminal", -1, now)
+		e.removeRegion(r)
+		return
 	}
 	if err != nil || !sameFile(id, r.ID) || !supportedFS(f) {
 		e.candidateEvent(r, "changed_terminal", -1, now)
@@ -678,6 +674,13 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		id, err := statFile(f)
 		if err == nil {
 			e.auditOpen(entry.Path, id)
+		}
+		if err == nil && e.c.fileSkipReason(entry.Path, id) != "" {
+			e.auditSkip(entry.Path, e.c.fileSkipReason(entry.Path, id), &id)
+			entry.NextScan = now.Add(time.Duration(e.c.RescanSeconds) * time.Second)
+			f.Close()
+			e.cursor++
+			continue
 		}
 		if err != nil || id.Mode&syscall.S_IFMT != syscall.S_IFREG || !supportedFS(f) {
 			f.Close()

@@ -33,6 +33,8 @@
 
 这只是配置覆盖片段，其余默认值仍生效；先`check-config`，再`doctor`和observe观察。`auto_roots`仍是自动发现的补充，**不是唯一范围限制**；需要只处理指定目录时用paths。执行位例外必须位于显式paths/auto_roots内，不自动增加扫描根；不绕过目录权限、文件属主/mincore可见性、文件系统、符号链接、排除项和`.so`/`.a`文件名规则。不能对应用程序目录笼统授权。
 
+入库后的扫描、访问提示查询及候选建议前均重新检查文件资格，执行位/属主变化会使旧版本失效；不是仅在启动时检查一次。
+
 ```sh
 containercacheguard check-config --config /etc/ccg/config.json
 containercacheguard doctor --config /etc/ccg/config.json --require-ready

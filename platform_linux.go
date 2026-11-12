@@ -53,7 +53,7 @@ func statChild(parent *os.File, name string) (identity, error) {
 	return identityFromStat(s), nil
 }
 func sameFile(a, b identity) bool {
-	return a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.Mtime == b.Mtime
+	return a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.Mtime == b.Mtime && a.UID == b.UID && a.Mode == b.Mode
 }
 
 // Every component is opened beneath an already open directory without following

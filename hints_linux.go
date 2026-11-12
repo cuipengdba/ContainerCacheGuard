@@ -251,6 +251,13 @@ func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 		if err == nil {
 			e.auditOpen(hint.path, id)
 		}
+		if err == nil && e.c.fileSkipReason(hint.path, id) != "" {
+			e.auditSkip(hint.path, e.c.fileSkipReason(hint.path, id), &id)
+			f.Close()
+			hint.until = now
+			h.cursor++
+			continue
+		}
 		if err != nil || !sameFile(id, entry.ID) {
 			f.Close()
 			if err == nil && id.Dev == entry.ID.Dev && id.Ino == entry.ID.Ino {

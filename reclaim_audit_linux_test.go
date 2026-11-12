@@ -62,6 +62,40 @@ func TestAutoExecutableDataExceptionStaysScoped(t *testing.T) {
 		t.Fatal("symlink cause hidden")
 	}
 }
+
+func TestModeAndOwnerChangesInvalidateCandidates(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "data")
+	os.WriteFile(p, make([]byte, 65536), 0600)
+	c := defaultConfig()
+	c.AccessHints = false
+	c.AutoRoots = []string{d}
+	c.ProtectSeconds = 0
+	e := newEngine(c, []string{d})
+	defer e.close()
+	e.add(p, 0)
+	id := e.known[p].ID
+	changed := id
+	changed.UID++
+	if sameFile(id, changed) {
+		t.Fatal("ownership change not a new version")
+	}
+	e.track(e.known[p], 0, 65536, 65536, time.Now().Add(-time.Second))
+	var candidate *region
+	for _, r := range e.regions {
+		candidate = r
+	}
+	os.Chmod(p, 0700)
+	e.revisit.tokens = 1 << 20
+	e.advice.tokens = 1 << 20
+	e.ops.tokens = 10
+	var allow atomic.Bool
+	allow.Store(true)
+	e.inspect(candidate, time.Now(), &allow)
+	if len(e.regions) != 0 || e.stats.AdviceBytes != 0 || e.audit.snapshot.CandidateOutcomes["scope_changed_terminal"] != 1 {
+		t.Fatal("chmod bypassed executable gate")
+	}
+}
 func TestAuditSeparatesCumulativeWindowQueriesAndUnknownSkips(t *testing.T) {
 	c := defaultConfig()
 	c.MaxScanHistory = 2
@@ -176,6 +210,7 @@ func TestPressureBoostUsesExistingBudgetAndHonorsEveryVeto(t *testing.T) {
 	for name, change := range map[string]func(*Metrics){
 		"oom": func(m *Metrics) { m.OOMKill = 1 }, "dirty": func(m *Metrics) { m.Dirty = c.MaxDirtyBytes + 1 },
 		"io": func(m *Metrics) { m.IOBytesPerSecond = float64(c.MaxIOBytesPerSecond + 1) }, "latency": func(m *Metrics) { v := 101.0; m.BusinessP99 = &v },
+		"psi":     func(m *Metrics) { v := c.MaxIOPSIAvg10 + 1; m.IOPSI = &v },
 		"refault": func(m *Metrics) { m.FileRefaultsPerSecond = c.MaxFileRefaultsPerSecond + 1 }, "business_pause": func(m *Metrics) { m.BusinessPause = true },
 		"node": func(m *Metrics) { *m.Node.MemoryPressure = true }, "stop_line": func(m *Metrics) { *m.Node.AvailableBytes = nodeStopThreshold(c, m.Node) },
 		"missing": func(m *Metrics) { delete(m.Available, "oom_kill_total") }, "stale": func(m *Metrics) { m.Node.Time = m.Time.Add(-time.Hour) },

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,6 +45,7 @@ type RootScope struct {
 	Inode      uint64    `json:"inode"`
 	UID        uint32    `json:"uid"`
 	Mode       uint32    `json:"mode"`
+	ModeOctal  string    `json:"mode_octal"`
 	MountPath  string    `json:"mount_path,omitempty"`
 	MountRoot  string    `json:"mount_root,omitempty"`
 	Filesystem string    `json:"filesystem,omitempty"`
@@ -130,6 +132,7 @@ func (e *engine) auditRootRequests() {
 type queryIdentity struct {
 	Dev, Ino                    uint64
 	Mtime, Size, Offset, Length int64
+	UID, Mode                   uint32
 }
 type scanAudit struct {
 	groups                map[string]*AuditGroup
@@ -209,7 +212,7 @@ func (e *engine) auditOpen(path string, id identity) {
 				e.audit.snapshot.RootOverflow++
 				return
 			}
-			r := RootScope{CheckedAt: time.Now(), Path: p, Device: id.Dev, Inode: id.Ino, UID: id.UID, Mode: id.Mode}
+			r := RootScope{CheckedAt: time.Now(), Path: p, Device: id.Dev, Inode: id.Ino, UID: id.UID, Mode: id.Mode, ModeOctal: strconv.FormatUint(uint64(id.Mode&07777), 8)}
 			for _, m := range e.audit.mounts {
 				if (m.Path == "/" || beneath(p, m.Path)) && len(m.Path) > len(r.MountPath) {
 					r.MountPath, r.MountRoot, r.Filesystem = m.Path, m.Root, m.FSType
@@ -248,7 +251,7 @@ func (e *engine) auditQuery(path string, id identity, off, length, res int64, st
 		g.RecheckBytes += length
 	default:
 		g.InitialBytes += length
-		k := queryIdentity{id.Dev, id.Ino, id.Mtime, id.Size, off, length}
+		k := queryIdentity{id.Dev, id.Ino, id.Mtime, id.Size, off, length, id.UID, id.Mode}
 		if e.audit.seen[k] {
 			g.RepeatBytes += length
 			return

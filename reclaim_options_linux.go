@@ -6,9 +6,24 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
+
+func (c Config) fileSkipReason(path string, id identity) string {
+	if id.Mode&syscall.S_IFMT != syscall.S_IFREG || id.Size < int64(os.Getpagesize()) {
+		return "not_regular_or_subpage"
+	}
+	if c.Mode == "auto" && id.Mode&0111 != 0 && !c.executableData(path) {
+		return "execute_bit_auto"
+	}
+	b := filepath.Base(path)
+	if strings.Contains(b, ".so") || strings.HasSuffix(b, ".a") {
+		return "library_name"
+	}
+	return ""
+}
 
 func (c Config) executableData(path string) bool {
 	for _, p := range c.ExecutableDataPaths {
