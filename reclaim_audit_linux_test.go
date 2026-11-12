@@ -109,7 +109,7 @@ func TestAuditRootMetadataAndCandidateRingAreBounded(t *testing.T) {
 	defer e.close()
 	e.add(d, 0)
 	s := e.auditSnapshot()
-	if len(s.Roots) != 1 || s.Roots[0].Inode == 0 || s.Roots[0].Filesystem == "" || s.PGDATAHint != d {
+	if len(s.Roots) != 1 || s.Roots[0].Inode == 0 || s.Roots[0].Filesystem == "" || s.PGDATAHint != d || s.RequestedRootsCheckedAt.IsZero() || s.Roots[0].CheckedAt.IsZero() || s.ConfirmedColdPages != nil || s.ConfirmedCleanPages != nil {
 		t.Fatalf("missing real root metadata %+v", s)
 	}
 	r := &region{CandidateID: 3, Path: filepath.Join(d, "123"), Key: regionKey{1, 2, 0}, AdvisedAt: time.Now().Add(-time.Second)}

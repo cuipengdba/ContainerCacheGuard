@@ -38,14 +38,15 @@ type AuditGroup struct {
 	ReappearedBytes    int64             `json:"delayed_region_increase_bytes"`
 }
 type RootScope struct {
-	Path       string `json:"path"`
-	Device     uint64 `json:"device"`
-	Inode      uint64 `json:"inode"`
-	UID        uint32 `json:"uid"`
-	Mode       uint32 `json:"mode"`
-	MountPath  string `json:"mount_path,omitempty"`
-	MountRoot  string `json:"mount_root,omitempty"`
-	Filesystem string `json:"filesystem,omitempty"`
+	CheckedAt  time.Time `json:"checked_at"`
+	Path       string    `json:"path"`
+	Device     uint64    `json:"device"`
+	Inode      uint64    `json:"inode"`
+	UID        uint32    `json:"uid"`
+	Mode       uint32    `json:"mode"`
+	MountPath  string    `json:"mount_path,omitempty"`
+	MountRoot  string    `json:"mount_root,omitempty"`
+	Filesystem string    `json:"filesystem,omitempty"`
 }
 type CandidateEvent struct {
 	Sequence           uint64    `json:"sequence"`
@@ -63,18 +64,21 @@ type CandidateEvent struct {
 	SinceAdviceSeconds *float64  `json:"since_advice_seconds"`
 }
 type AuditSnapshot struct {
-	RequestedRoots    []RequestedRoot   `json:"requested_roots"`
-	Groups            []AuditGroup      `json:"groups"`
-	Roots             []RootScope       `json:"roots"`
-	PGDATAHint        string            `json:"pgdata_environment_hint,omitempty"`
-	HistoryEntries    int               `json:"scan_history_entries"`
-	HistoryEvictions  uint64            `json:"scan_history_evictions"`
-	MergedGroups      uint64            `json:"group_overflow_operations"`
-	RootOverflow      uint64            `json:"root_metadata_overflow"`
-	CandidateOutcomes map[string]uint64 `json:"candidate_outcomes"`
-	Events            []CandidateEvent  `json:"recent_candidate_events"`
-	EventsOverwritten uint64            `json:"candidate_events_overwritten"`
-	Accounting        string            `json:"accounting_scope"`
+	RequestedRootsCheckedAt time.Time         `json:"requested_roots_checked_at"`
+	ConfirmedColdPages      *uint64           `json:"confirmed_cold_pages"`
+	ConfirmedCleanPages     *uint64           `json:"confirmed_clean_pages"`
+	RequestedRoots          []RequestedRoot   `json:"requested_roots"`
+	Groups                  []AuditGroup      `json:"groups"`
+	Roots                   []RootScope       `json:"roots"`
+	PGDATAHint              string            `json:"pgdata_environment_hint,omitempty"`
+	HistoryEntries          int               `json:"scan_history_entries"`
+	HistoryEvictions        uint64            `json:"scan_history_evictions"`
+	MergedGroups            uint64            `json:"group_overflow_operations"`
+	RootOverflow            uint64            `json:"root_metadata_overflow"`
+	CandidateOutcomes       map[string]uint64 `json:"candidate_outcomes"`
+	Events                  []CandidateEvent  `json:"recent_candidate_events"`
+	EventsOverwritten       uint64            `json:"candidate_events_overwritten"`
+	Accounting              string            `json:"accounting_scope"`
 }
 type RequestedRoot struct {
 	Path   string `json:"path"`
@@ -82,6 +86,7 @@ type RequestedRoot struct {
 }
 
 func (e *engine) auditRootRequests() {
+	e.audit.snapshot.RequestedRootsCheckedAt = time.Now()
 	requested := append(append([]string{}, e.c.Paths...), e.c.AutoRoots...)
 	if e.c.Mode == "auto" && e.audit.snapshot.PGDATAHint != "" {
 		requested = append(requested, e.audit.snapshot.PGDATAHint)
@@ -204,7 +209,7 @@ func (e *engine) auditOpen(path string, id identity) {
 				e.audit.snapshot.RootOverflow++
 				return
 			}
-			r := RootScope{Path: p, Device: id.Dev, Inode: id.Ino, UID: id.UID, Mode: id.Mode}
+			r := RootScope{CheckedAt: time.Now(), Path: p, Device: id.Dev, Inode: id.Ino, UID: id.UID, Mode: id.Mode}
 			for _, m := range e.audit.mounts {
 				if (m.Path == "/" || beneath(p, m.Path)) && len(m.Path) > len(r.MountPath) {
 					r.MountPath, r.MountRoot, r.Filesystem = m.Path, m.Root, m.FSType

@@ -15,7 +15,7 @@
 3. 对源容器和备份容器分别检查同一个实际文件的设备、inode、大小、属主和挂载。共享同一个内核inode可观察同一页缓存；不同复制品不共享。即使页缓存相同，其cgroup计费也不能由路径或inode直接推出。
 4. 表空间链接不会被跟随。需要将实际磁盘目标以真实路径挂载并单独授权，不能为了覆盖率关闭符号链接保护。默认WAL、事务状态等目录仍排除。
 
-`coverage_audit.requested_roots`解释显式请求目录未进入实际范围的情况；`roots`是已打开的根元数据，`pgdata_environment_hint`仅为环境线索。嵌套挂载/设备变化、overlay复制层和跨容器计费都要与真实数据库容器的指标对照。根元数据不能覆盖每个子文件的完整挂载审计。
+`coverage_audit.requested_roots`是启动时显式请求目录的检查结果，时间见`requested_roots_checked_at`，不能当成每秒重新检查；`roots`是已打开的根元数据，各自带`checked_at`，`pgdata_environment_hint`仅为启动环境线索。嵌套挂载/设备变化、overlay复制层和跨容器计费都要与真实数据库容器的指标对照。根元数据不能覆盖每个子文件的完整挂载审计。
 
 ## 第二步：扩大需要的文件范围
 
@@ -63,6 +63,8 @@ containercacheguard run --config /etc/ccg/config.json
 
 全容器普通文件指标用`file-shmem`，与文件范围观察分开看。anon、shmem、slab始终仅诊断。缓存被其他进程再次使用、内核自然回收和并发写入都可能影响观察。
 
+`confirmed_cold_pages`和`confirmed_clean_pages`保留为null：当前普通mincore/fadvise后端不能确认逐页热度或干净状态，不用策略合格计数冒充这两项。
+
 ## 候选与分时复查
 
 `recent_candidate_events`保留有界环，按sequence排序。关联键为`run_id + candidate_id`，并带路径、设备/inode、范围、尝试次数、复查阶段和实际时间。创建、策略合格、建议、立即结果、延迟复查、重新驻留保护、重试、无进展退避及终态可追溯。测量失败的驻留值是null；0才表示已测量到0。
@@ -97,7 +99,7 @@ containercacheguard run --config /etc/ccg/config.json
 
 ## 测试如何算通过
 
-原生CI的隔离实验创建约1.125GiB已知低复用普通文件（包含0700文件），先确认至少1GiB驻留；observe不发建议，再enforce记录至少1GiB范围下降及多个复查时点。并行真实PG14 SQL和本地测试API探针记录耗时/错误；记录可见cgroup IO、CPU/RSS、OOM累计和内容摘要。测试API只存在CI脚本，CCG不提供Web服务。文件在测持续性之前不被哈希重读，避免把校验自身造成的回温当成业务行为。
+原生CI的隔离实验创建约1.125GiB已知低复用普通文件（包含0700文件），先确认至少1GiB驻留；observe不发建议，再enforce记录至少1GiB范围下降及多个复查时点。并行真实PG14 SQL和本地测试API探针记录耗时/错误；记录可见cgroup IO、CPU/RSS、OOM累计和内容摘要。CCG为切换observe/enforce配置分别启动，数据库不重启、缓存不归零，两阶段前后核对同一可见cgroup身份和OOM原始累计值；这不是各数据库独立容器的完整OOM历史审计。测试API只存在CI脚本，CCG不提供Web服务。文件在测持续性之前不被哈希重读，避免把校验自身造成的回温当成业务行为。
 
 热点mmap、父级压力、脏页/业务/IO否决、历史OOM、目录/提示/统计溢出另有回归；部分策略输入由明确测试fixture提供，不是生产故障注入。mincore只是驻留快照，低读盘和文件未修改不能证明没有内存访问；映射热点的测试不表示工具能提前识别所有热页。详见[mincore文档](https://www.man7.org/linux/man-pages/man2/mincore.2.html)。fadvise是建议，脏页可能触发写回且不能保证立即释放，见[内核接口手册](https://www.man7.org/linux/man-pages/man2/posix_fadvise.2.html)。页缓存计费和内存限制的层级规则见[内核cgroup v2文档](https://docs.kernel.org/admin-guide/cgroup-v2.html)。
 

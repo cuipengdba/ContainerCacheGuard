@@ -35,7 +35,8 @@ def main():
         def do_GET(self):
             start=time.monotonic()
             try:
-                sql('UPDATE ccg_rc16_probe SET n=n+1 WHERE id=1; SELECT count(*) FROM ccg_rc16_probe;')
+                result=sql('UPDATE ccg_rc16_probe SET n=n+1 WHERE id=1; SELECT count(*) FROM ccg_rc16_probe;')
+                assert result.strip().splitlines()[-1]=='10000','SQL row count mismatch'
                 body=b'healthy'; self.send_response(200)
                 probes.append({'phase':phase['name'],'sql_ms':1000*(time.monotonic()-start),'error':False})
             except Exception as exc:
@@ -91,7 +92,14 @@ def main():
             def status():
                 try:return json.loads(state.read_text())
                 except (FileNotFoundError,json.JSONDecodeError):return None
-            phase['name']='observe';log=start('observe'); time.sleep(10)
+            def collect_for(seconds,states):
+                deadline=time.monotonic()+seconds
+                while time.monotonic()<deadline:
+                    if daemon.poll() is not None:raise RuntimeError('daemon exited during observation')
+                    s=status()
+                    if s and (not states or states[-1]['time']!=s['time']):states.append(s)
+                    time.sleep(.2)
+            phase['name']='observe';log=start('observe'); observe_states=[]; collect_for(10,observe_states)
             observed=status();assert observed and observed['counters']['advice_bytes']==0
             report['observe_end_resident_bytes']=resident()
             assert report['observe_end_resident_bytes']>=GiB,'baseline lost fixture pages to external reclaim'
@@ -101,20 +109,34 @@ def main():
                 if daemon.poll() is not None:raise RuntimeError((w/'enforce.stdout').read_text()[-4000:])
                 s=status()
                 if s:
-                    states.append(s)
+                    if not states or states[-1]['time']!=s['time']:states.append(s)
                     if s['counters']['observed_net_reduction_bytes']>=GiB:break
                 time.sleep(.2)
             else:raise AssertionError('1GiB advice reduction not reached; last='+json.dumps(status()))
             report['seconds_to_1gib_immediate_region_decrease']=time.monotonic()-began
             report['persistence']=[]
             for delay in [0,5,15]:
-                if delay:time.sleep(delay)
+                if delay:collect_for(delay,states)
                 value=resident();report['persistence'].append({'seconds_since_1gib_gate':time.monotonic()-began-report['seconds_to_1gib_immediate_region_decrease'],'resident_bytes':value,'decrease_from_observe_end_bytes':report['observe_end_resident_bytes']-value})
                 assert report['observe_end_resident_bytes']-value>=GiB,('GiB decrease not sustained',report['persistence'])
             last=status();report['last_status']=last
             first=states[0]['metrics'];end=last['metrics']
+            report['observe_oom_kill_before']=observe_states[0]['metrics']['oom_kill_total']
+            report['observe_oom_kill_after']=observe_states[-1]['metrics']['oom_kill_total']
             report['oom_kill_before']=first['oom_kill_total'];report['oom_kill_after']=end['oom_kill_total']
+            assert all(s['metrics']['version']==2 and s['metrics'].get('available_metrics',{}).get('oom_kill_total') for s in observe_states+states),'OOM coverage unavailable'
+            assert (first['cgroup_device'],first['cgroup_inode'])==(observe_states[0]['metrics']['cgroup_device'],observe_states[0]['metrics']['cgroup_inode']),'cgroup identity changed across phases'
+            assert report['observe_oom_kill_before']==report['observe_oom_kill_after']==report['oom_kill_before'],'OOM occurred before/en route to treatment'
             assert report['oom_kill_after']==report['oom_kill_before'],'new OOM observed'
+            report['oom_scope']='visible CCG cgroup cumulative counter in both phases, not per-database container OOM history'
+            report['phase_telemetry']={}
+            for label,samples in [('observe',observe_states),('enforce',states)]:
+                metrics=[s['metrics'] for s in samples]
+                measured=[m['io_bytes_per_second'] for m in metrics if m.get('available_metrics',{}).get('io_bytes_per_second')]
+                report['phase_telemetry'][label]={'unique_state_samples':len(samples),
+                    'visible_cgroup_io_sampled_peak_bytes_per_second':max(measured,default=None),
+                    'self_cpu_sampled_peak_percent':max(m['self_cpu_percent'] for m in metrics),
+                    'self_rss_sampled_peak_bytes':max(m['self_rss_bytes'] for m in metrics)}
             rates=[s['metrics']['io_bytes_per_second'] for s in states if s['metrics'].get('available_metrics',{}).get('io_bytes_per_second')]
             report['sampled_visible_cgroup_io_peak_bytes_per_second']=max(rates,default=None)
             report['sampled_self_cpu_peak_percent']=max(s['metrics']['self_cpu_percent'] for s in states)
