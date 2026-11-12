@@ -12,3 +12,7 @@
 不修改CPU、DBS/HISDBS内存或IO配额，不清理anon/shmem/slab，不重启归零或全局drop_caches。没有证据将slab下降记为CCG收益。用户06:14—07:13的rc.12结论保留为外部证据，现场原因仍需原始日志、实际PGDATA/权限与记账对照确认。
 
 计划与完整参数见[开发计划](RC16-PLAN.zh.md)和[使用手册](RC16-USAGE.zh.md)。发布前需原生双架构回归与>=1GiB隔离对照；实际结果由发布附件和最终交付单记录，不能将隔离PG14探针替代DBS/HISDBS真实备份恢复和48小时验收。
+
+## 最终发布回执
+
+已公开[候选版](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.16)；源码`e70a71d0a4d2f96cfb039754585d33d22c608c59`，[CI](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/43125852933)。两架构各104项顶层race单测/45项CLI/3项采集器及至少1GiB隔离对照通过；6附件摘要与标签一致。[中文实际结果](RC16-DELIVERY.zh.md)。

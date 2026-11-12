@@ -17,3 +17,7 @@
 默认不启用压力增强，也不为auto全盘放开执行位。增强不等于无上限清缓存；不改CPU/容器内存/IO配额，不重启数据库，不drop_caches，不承诺回收anon/shmem/slab或保证不驱逐。cgroup记账不能从文件设备/inode推断：共享同inode页缓存可跨容器观察，但实际计费、可见范围和其他访问者需要单独核对。本轮优先隔离CI开发验证，不连接/修改171或94运行环境。
 
 测试和正式发布完成后补实际提交与结果；此计划不是验收结论。
+
+## 执行结果
+
+候选已公开，实际提交、原生回归、GiB对照及未验收项见[完整交付](RC16-DELIVERY.zh.md)。源码`e70a71d0a4d2f96cfb039754585d33d22c608c59`，[CI](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/43125852933)。

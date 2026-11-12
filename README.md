@@ -7,11 +7,9 @@
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
-rc.16正在进行原生回归：新增覆盖归因、明确数据路径执行位例外、候选延迟复查与受保护压力加速；见[计划](docs/RC16-PLAN.zh.md)及[使用手册](docs/RC16-USAGE.zh.md)。原始现场原因仍待核对，测试通过后另记实际结果。
+**最新候选版为 [0.2.0-rc.16](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.16)**。新增根目录/类型覆盖归因、明确数据路径执行位例外、运行期资格复核、候选延迟复查和受真实保护约束的压力加速。两架构各104项顶层race单测、45项CLI、3项采集器通过，0跳过；>=1GiB隔离文件对照与真实PG14 SQL/本地测试API探针通过。静态双架构、6附件摘要/标签已核验，无Web。[使用手册](docs/RC16-USAGE.zh.md)、[完整结果和限制](docs/RC16-DELIVERY.zh.md)、[计划](docs/RC16-PLAN.zh.md)。
 
-**最新候选版为 [0.2.0-rc.15](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.15)**；[rc.14](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.14)一并完成。rc.14加固信号读取、许可到期和离线配置检查；rc.15增加缓存占用时间与覆盖统计、按实例比较改善和IO/尾延迟/自身开销。两架构分别86/93项顶层race单测、39/43项CLI、各3项采集器测试通过；静态程序和各6附件已核验，无Web。[两版计划](docs/RC14-RC15-PLAN.zh.md)、[最终交付](docs/RC14-RC15-DELIVERY.zh.md)、[rc.14手册](docs/RC14-USAGE.zh.md)、[rc.15手册](docs/RC15-USAGE.zh.md)。
-
-**候选发布不等于现场验收。** compare的telemetry_thresholds_met仅评价报告内的门槛，不证明因果或零驱逐；本轮未连接/修改171或94，未替换运行实例，真实PG14匹配备份恢复与48小时仍未通过。
+**压力加速默认关闭，候选发布不等于现场验收。** 本次隔离执行期SQL/API采样p99与可见cgroup IO峰值上升，低影响尚未验收。1GiB试验是已知低复用文件，不是实际DBS/HISDBS业务重放；不能证明临界救援或不被驱逐。新OOM、脏页、IO/业务/节点等保护仍生效。原始现场覆盖不足原因待核实，本轮未连接/修改171或94，真实PG14匹配备份恢复与48小时仍未通过。rc.14/15已交付的信号加固与离线compare继续保留：[两版交付](docs/RC14-RC15-DELIVERY.zh.md)。
 
 此前候选版本为 [**0.2.0-rc.13**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13)。新增显式受限备份输出保护、来源绑定的实际kubelet内存驱逐信号、实例/运行/cgroup身份和多容器离线SVG图片；默认strict不降级，继续无Web、每日详细日志与30天/1GB清理。原生amd64/arm64各82项顶层race单测、37项CLI和3项采集器规范化通过，0跳过，6附件摘要与标签已核验。详见[版本说明](docs/RELEASE-v0.2.0-rc.13.zh.md)、[详细使用与参数](docs/RC13-USAGE.zh.md)、[本版验证和限制](docs/RC13-DELIVERY.zh.md)。
 
