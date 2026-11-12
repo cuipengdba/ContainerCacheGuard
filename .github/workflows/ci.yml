@@ -85,6 +85,14 @@ jobs:
         run: |
           set -euo pipefail
           go test -run '^$' -bench '^BenchmarkSleepingIndex$' -benchtime=50x -benchmem | tee scheduling-benchmark-results.log
+      - name: Real kernel reclaim in a dedicated cgroup with restart deduplication
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: ccg-isolated-ci-only
+          PGDATABASE: ccg_test
+        run: sudo --preserve-env=PGHOST,PGPORT,PGUSER,PGPASSWORD,PGDATABASE python3 scripts/kernel_reclaim.py dist/containercacheguard-linux-${{ matrix.arch }} --output kernel-results.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

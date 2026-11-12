@@ -9,7 +9,7 @@
 
 **最新候选版为 [0.2.0-rc.16](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.16)**。新增根目录/类型覆盖归因、明确数据路径执行位例外、运行期资格复核、候选延迟复查和受真实保护约束的压力加速。两架构各104项顶层race单测、45项CLI、3项采集器通过，0跳过；>=1GiB隔离文件对照与真实PG14 SQL/本地测试API探针通过。静态双架构、6附件摘要/标签已核验，无Web。[使用手册](docs/RC16-USAGE.zh.md)、[完整结果和限制](docs/RC16-DELIVERY.zh.md)、[计划](docs/RC16-PLAN.zh.md)。
 
-**下一版rc.17设计中：[驱逐前单次memory.reclaim](docs/RC17-MEMORY-RECLAIM-DESIGN.zh.md)。** 区分容器/父级OOM余量与kubelet驱逐余量，每轮压力至多一次内核请求，持久去重、节点串行及业务保护；注意inactive_file下降未必改善驱逐信号。尚未编码或测试，不属于rc.16已实现功能，不保证零OOM/零驱逐。
+**rc.17开发与验证：[驱逐前单次memory.reclaim](docs/RC17-USAGE.zh.md)。** 新后端默认关闭；区分容器/父级OOM余量与真实kubelet驱逐余量，每轮压力至多一次内核请求，持久去重、节点串行及业务保护。当前正在原生双架构验证，尚未发布此候选；不能把代码完成当作现场验收。[原始设计](docs/RC17-MEMORY-RECLAIM-DESIGN.zh.md)。
 
 **压力加速默认关闭，候选发布不等于现场验收。** 本次隔离执行期SQL/API采样p99与可见cgroup IO峰值上升，低影响尚未验收。1GiB试验是已知低复用文件，不是实际DBS/HISDBS业务重放；不能证明临界救援或不被驱逐。新OOM、脏页、IO/业务/节点等保护仍生效。原始现场覆盖不足原因待核实，本轮未连接/修改171或94，真实PG14匹配备份恢复与48小时仍未通过。rc.14/15已交付的信号加固与离线compare继续保留：[两版交付](docs/RC14-RC15-DELIVERY.zh.md)。
 

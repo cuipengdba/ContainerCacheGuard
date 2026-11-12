@@ -31,6 +31,7 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
   containercacheguard doctor [--config config.json] [--path /data] [--require-ready]
   containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json|svg]
   containercacheguard run --config config.json [--mode auto|paths] [--action observe|enforce]
+  containercacheguard reclaim-agent --config agent.json [--duration 5m]
   containercacheguard status [--state-file /tmp/containercacheguard/status.json]
   containercacheguard scan --path /data [--scan-bytes-per-second 268435456]
   containercacheguard version
@@ -44,6 +45,8 @@ pressure_boost显式启用后在真实保护允许时加速至配置上限，需
 run 可覆盖 --cache-target-bytes、--reclaim-bytes-per-second、--cgroup-path、--state-file。
 SIGUSR1 暂停新释放，SIGUSR2 恢复，SIGTERM/SIGINT 退出；配置修改需重启。
 不提供Web/HTTP服务、不监听端口；通过每日日志和status状态文件查看。
+kernel_reclaim默认关闭；显式启用后由受限节点reclaim-agent通过Unix Socket串行执行。
+每压力事件至多一次memory.reclaim尝试；覆盖整个目标cgroup，不受路径排除约束。
 日志默认每天一个文件，最多30个日历日、合计1GB；目录/天数/容量/时区可配置。
 scan 是只读驻留扫描，输出不是热度；可能需要完整遍历，不属于常态轻量监控。
 doctor --require-ready采集两个样本，保护输入不齐返回非零；不会启用PSI或关闭保护。
@@ -52,7 +55,7 @@ instance_id标识部署实例；每次run启动生成独立随机run_id，日志
 protection_profile默认strict；limited-output为显式实验策略，仅指定低复用备份产物，
 须配置来源绑定的kubelet与业务信号、替代保护和更小预算；缺项即暂停，不能承诺不被驱逐。
 
-只操作已授权路径下支持的普通磁盘文件。不会删除文件、清空应用堆、清理全机缓存、
+常态文件后端只操作已授权路径下支持的普通磁盘文件。不会删除文件、清空应用堆、清理全机缓存、
 修改 cgroup 限额或杀业务。fadvise 可能引起写回；驻留不等于冷热，无法保证零影响。
 中文文档：https://github.com/cuipengdba/ContainerCacheGuard
 `
@@ -77,6 +80,12 @@ func entry(args []string) error {
 		return nil
 	}
 	cmd := args[0]
+	if cmd == "reclaim-agent" {
+		return kernelAgentCommand(args[1:])
+	}
+	if cmd == "internal-kernel-write" {
+		return kernelWriteCommand(args[1:])
+	}
 	if cmd == "compare" {
 		return compareCommand(args[1:])
 	}
@@ -211,6 +220,20 @@ func entry(args []string) error {
 			result["metrics"] = m
 			result["protection"] = assessProtection(c, m)
 			result["signals"] = signals(c, m, time.Now())
+			if c.KernelReclaim.Enabled {
+				boot, bootErr := readBootID()
+				ks := kernelRead(c, r, boot)
+				reason := kernelGuard(c, ks, boot, time.Now())
+				if bootErr != nil {
+					reason = "boot_id_unavailable"
+				}
+				risk, healthy, deficit := kernelRisk(c, ks, KernelSample{})
+				request, estimate := kernelRequest(c, ks, deficit, 1<<30)
+				result["kernel_reclaim"] = map[string]any{"read_only": true, "guard_reason": reason, "risk": risk, "healthy": healthy, "estimated_request_bytes": request, "file_estimate_bytes": estimate, "write_permission_verified": false, "sample": ks}
+				if *requireReady && reason != "" {
+					e = fmt.Errorf("kernel reclaim not ready: %s", reason)
+				}
+			}
 			if m.Error != "" {
 				e = fmt.Errorf("metrics unavailable: %s", m.Error)
 			}
@@ -265,6 +288,7 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
+	KernelReclaim     *KernelStatus     `json:"kernel_reclaim,omitempty"`
 	Signals           SignalStatus      `json:"signals"`
 	InstanceID        string            `json:"instance_id,omitempty"`
 	RunID             string            `json:"run_id,omitempty"`
@@ -379,6 +403,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	debug.SetMemoryLimit(c.MaxRSSBytes * 3 / 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	kernelClient := newKernelClient(ctx, c)
 	if duration > 0 {
 		var stop context.CancelFunc
 		ctx, stop = context.WithTimeout(ctx, duration)
@@ -504,6 +529,12 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					s.Decision.Reason = "worker_slow_or_blocked"
 				}
 				s.Decision, s.Recovery = recovery.apply(c, s.Decision, now)
+				s.KernelReclaim = kernelClient.sample(c, s.Paused, !s.WorkerBusy, now)
+				if s.KernelReclaim != nil && s.KernelReclaim.HoldFile && c.Action == "enforce" {
+					s.Decision.Allow = false
+					s.Decision.State = "SUSPENDED"
+					s.Decision.Reason = "kernel_reclaim_owns_target_or_unavailable"
+				}
 				// A guard can clear Allow after policy evaluation. It must also
 				// clear the rate boost; the worker has no separate permission.
 				if !s.Decision.Allow {

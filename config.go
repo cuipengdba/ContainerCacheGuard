@@ -14,29 +14,30 @@ const MiB int64 = 1 << 20
 
 // Config has no executable hooks and never changes cgroup limits.
 type Config struct {
-	ExecutableDataPaths            []string `json:"executable_data_paths"`
-	PressureBoost                  bool     `json:"pressure_boost"`
-	PressureBoostNodeHeadroomBytes int64    `json:"pressure_boost_node_headroom_bytes"`
-	MaxAuditGroups                 int      `json:"max_audit_groups"`
-	MaxScanHistory                 int      `json:"max_scan_history"`
-	MaxCandidateEvents             int      `json:"max_candidate_events"`
-	ExtendedRecheckSeconds         []int    `json:"extended_recheck_seconds"`
-	InstanceID                     string   `json:"instance_id,omitempty"`
-	ProtectionProfile              string   `json:"protection_profile,omitempty"`
-	OutputLowReuse                 bool     `json:"output_low_reuse,omitempty"`
-	NodeSignal                     string   `json:"node_signal,omitempty"`
-	NodeID                         string   `json:"node_id,omitempty"`
-	NodeSourceID                   string   `json:"node_source_id,omitempty"`
-	BusinessSourceID               string   `json:"business_source_id,omitempty"`
-	NodeSafetyMarginBytes          int64    `json:"node_safety_margin_bytes,omitempty"`
-	Mode                           string   `json:"mode"`
-	Action                         string   `json:"action"`
-	Paths                          []string `json:"paths"`
-	AutoRoots                      []string `json:"auto_roots"`
-	ExcludePaths                   []string `json:"exclude_paths"`
-	ExcludeNames                   []string `json:"exclude_names"`
-	CgroupPath                     string   `json:"cgroup_path"`
-	StateFile                      string   `json:"state_file"`
+	KernelReclaim                  KernelConfig `json:"kernel_reclaim"`
+	ExecutableDataPaths            []string     `json:"executable_data_paths"`
+	PressureBoost                  bool         `json:"pressure_boost"`
+	PressureBoostNodeHeadroomBytes int64        `json:"pressure_boost_node_headroom_bytes"`
+	MaxAuditGroups                 int          `json:"max_audit_groups"`
+	MaxScanHistory                 int          `json:"max_scan_history"`
+	MaxCandidateEvents             int          `json:"max_candidate_events"`
+	ExtendedRecheckSeconds         []int        `json:"extended_recheck_seconds"`
+	InstanceID                     string       `json:"instance_id,omitempty"`
+	ProtectionProfile              string       `json:"protection_profile,omitempty"`
+	OutputLowReuse                 bool         `json:"output_low_reuse,omitempty"`
+	NodeSignal                     string       `json:"node_signal,omitempty"`
+	NodeID                         string       `json:"node_id,omitempty"`
+	NodeSourceID                   string       `json:"node_source_id,omitempty"`
+	BusinessSourceID               string       `json:"business_source_id,omitempty"`
+	NodeSafetyMarginBytes          int64        `json:"node_safety_margin_bytes,omitempty"`
+	Mode                           string       `json:"mode"`
+	Action                         string       `json:"action"`
+	Paths                          []string     `json:"paths"`
+	AutoRoots                      []string     `json:"auto_roots"`
+	ExcludePaths                   []string     `json:"exclude_paths"`
+	ExcludeNames                   []string     `json:"exclude_names"`
+	CgroupPath                     string       `json:"cgroup_path"`
+	StateFile                      string       `json:"state_file"`
 	// Legacy fields are accepted only to upgrade old configuration files.
 	// They never trigger networking, token reads or history allocation.
 	WebListen                    string  `json:"web_listen,omitempty"`
@@ -89,6 +90,7 @@ type Config struct {
 
 func defaultConfig() Config {
 	return Config{
+		KernelReclaim:  defaultKernelConfig(),
 		MaxAuditGroups: 64, MaxScanHistory: 16384, MaxCandidateEvents: 32, ExecutableDataPaths: []string{}, ExtendedRecheckSeconds: []int{}, PressureBoostNodeHeadroomBytes: 1024 * MiB,
 		Mode: "auto", Action: "observe", Paths: []string{}, AutoRoots: []string{}, ExcludePaths: []string{},
 		ExcludeNames: []string{"pg_wal", "pg_xlog", "global", "pg_xact", "pg_multixact", "pg_subtrans", "pg_replslot", "pg_logical", "pg_dynshmem", "pg_stat_tmp", "pg_notify", "pg_serial", "pg_snapshots", "lost+found"},
@@ -125,6 +127,9 @@ func loadConfig(path string) (Config, error) {
 	return c, nil
 }
 func (c Config) validate() error {
+	if err := c.validateKernel(); err != nil {
+		return err
+	}
 	if err := c.validateReclaimOptions(); err != nil {
 		return err
 	}
