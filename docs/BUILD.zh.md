@@ -26,7 +26,7 @@ python3 scripts/integration.py ./dist/containercacheguard-linux-amd64 --output i
 
 rc.11取消页面及HTTP服务，不再使用Node网页回归。原生CLI检查实际进程没有TCP监听，即使旧配置带占用端口和令牌FIFO也能运行；另验证详细日志、未知值、增量及错误边界。旧版网页结果不能计入本版。
 
-race 测试需要本机可用的 C 工具链；这不改变最终静态程序的依赖。Linux 文件机制测试需支持的真实磁盘文件系统；tmpfs 不作为支持目标。集成测试只在临时目录造文件，不修改 cgroup 限额、不全机清缓存。持续压力、真实数据、Kubernetes/OpenShift 验收另见测试报告。
+race 测试需要本机可用的 C 工具链；这不改变最终静态程序的依赖。Linux 文件机制测试需支持的真实磁盘文件系统；tmpfs 不作为支持目标。原CLI集成测试只在临时目录造文件，不修改cgroup限额、不全机清缓存。rc.17额外的`scripts/kernel_reclaim.py`必须在临时专用VM以root运行：新建自己的限额叶子cgroup与文件，执行真实memory.reclaim和重启去重，再清理本次资源；不修改既有业务cgroup或全机drop_caches，不可照搬到现有数据库容器。持续压力、真实数据、Kubernetes/OpenShift 验收另见测试报告。
 
 CI 在原生 x86_64 和 ARM64 runner 执行，不能以交叉编译成功代替原生执行；页大小随 runner 记录，4KiB 的 ARM64 结果不能证明64KiB内核已通过。
 

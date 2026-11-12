@@ -7,11 +7,13 @@
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
-**最新候选版为 [0.2.0-rc.16](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.16)**。新增根目录/类型覆盖归因、明确数据路径执行位例外、运行期资格复核、候选延迟复查和受真实保护约束的压力加速。两架构各104项顶层race单测、45项CLI、3项采集器通过，0跳过；>=1GiB隔离文件对照与真实PG14 SQL/本地测试API探针通过。静态双架构、6附件摘要/标签已核验，无Web。[使用手册](docs/RC16-USAGE.zh.md)、[完整结果和限制](docs/RC16-DELIVERY.zh.md)、[计划](docs/RC16-PLAN.zh.md)。
+**最新候选为[0.2.0-rc.17](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.17)：新增驱逐前单次memory.reclaim后端，默认关闭。** 每事件至多一次持久登记、节点串行、受限Unix Socket、阻塞辅助进程、真实保护与120秒复查。原生amd64/arm64各119项顶层race单测、45项CLI和真实内核隔离实验通过；1.125GiB缓存池请求256MiB，120秒末文件净下降约250MiB，执行器重启后没有重复调用。不是实际Kubernetes驱逐验收。[详细使用和全部参数](docs/RC17-USAGE.zh.md)、[实际结果与风险](docs/RC17-DELIVERY.zh.md)。
 
-**rc.17开发与验证：[驱逐前单次memory.reclaim](docs/RC17-USAGE.zh.md)。** 新后端默认关闭；区分容器/父级OOM余量与真实kubelet驱逐余量，每轮压力至多一次内核请求，持久去重、节点串行及业务保护。当前正在原生双架构验证，尚未发布此候选；不能把代码完成当作现场验收。[原始设计](docs/RC17-MEMORY-RECLAIM-DESIGN.zh.md)。
+**内核后端覆盖整个登记cgroup，文件目录/WAL排除不约束它。** 历史OOM、IO/业务恶化、信号缺失等仍会停止新操作；不保证释放指定字节或永不驱逐。94只读确认接口存在但无PSI，尚未部署新版本；生产schema2采集、无PSI真实盘替代和四角色等压/48小时仍待验收。常态文件后端的路径/类型边界见下文，不能套用到内核后端。[原始设计](docs/RC17-MEMORY-RECLAIM-DESIGN.zh.md)。
 
-**压力加速默认关闭，候选发布不等于现场验收。** 本次隔离执行期SQL/API采样p99与可见cgroup IO峰值上升，低影响尚未验收。1GiB试验是已知低复用文件，不是实际DBS/HISDBS业务重放；不能证明临界救援或不被驱逐。新OOM、脏页、IO/业务/节点等保护仍生效。原始现场覆盖不足原因待核实，本轮未连接/修改171或94，真实PG14匹配备份恢复与48小时仍未通过。rc.14/15已交付的信号加固与离线compare继续保留：[两版交付](docs/RC14-RC15-DELIVERY.zh.md)。
+上一候选[rc.16](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.16)的根目录/类型归因、执行位数据例外、候选复查与受保护压力加速均保留。[rc.16手册](docs/RC16-USAGE.zh.md)。
+
+**压力加速默认关闭，候选发布不等于现场验收。** 本次隔离执行期SQL/API采样p99与可见cgroup IO峰值上升，低影响尚未验收。1GiB试验是已知低复用文件，不是实际DBS/HISDBS业务重放；不能证明临界救援或不被驱逐。新OOM、脏页、IO/业务/节点等保护仍生效。原始现场覆盖不足原因待核实，rc.16轮未连接171/94；rc.17仅只读检查94。真实PG14匹配备份恢复与48小时仍未通过。rc.14/15已交付的信号加固与离线compare继续保留：[两版交付](docs/RC14-RC15-DELIVERY.zh.md)。
 
 此前候选版本为 [**0.2.0-rc.13**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13)。新增显式受限备份输出保护、来源绑定的实际kubelet内存驱逐信号、实例/运行/cgroup身份和多容器离线SVG图片；默认strict不降级，继续无Web、每日详细日志与30天/1GB清理。原生amd64/arm64各82项顶层race单测、37项CLI和3项采集器规范化通过，0跳过，6附件摘要与标签已核验。详见[版本说明](docs/RELEASE-v0.2.0-rc.13.zh.md)、[详细使用与参数](docs/RC13-USAGE.zh.md)、[本版验证和限制](docs/RC13-DELIVERY.zh.md)。
 
