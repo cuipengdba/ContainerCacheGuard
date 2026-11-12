@@ -242,11 +242,15 @@ func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 		}
 		f, err := safeOpen(hint.path)
 		if err != nil {
+			e.auditSkip(hint.path, openSkipReason(err), nil)
 			hint.until = now
 			h.cursor++
 			continue
 		}
 		id, err := statFile(f)
+		if err == nil {
+			e.auditOpen(hint.path, id)
+		}
 		if err != nil || !sameFile(id, entry.ID) {
 			f.Close()
 			if err == nil && id.Dev == entry.ID.Dev && id.Ino == entry.ID.Ino {
@@ -263,11 +267,13 @@ func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 		res, err := resident(f, hint.offset, length)
 		f.Close()
 		if err != nil {
+			e.auditSkip(hint.path, "residency_unavailable", &id)
 			e.failure(err)
 			hint.until = now
 			h.cursor++
 			continue
 		}
+		e.auditQuery(hint.path, id, hint.offset, length, res, "initial")
 		e.stats.ScannedBytes += length
 		e.stats.ObservedResidentBytes += res
 		e.track(entry, hint.offset, length, res, now)

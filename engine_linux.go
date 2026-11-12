@@ -16,45 +16,47 @@ import (
 )
 
 type Counters struct {
-	DetectedRoots         []string `json:"detected_roots"`
-	Files                 int      `json:"indexed_files"`
-	Directories           int      `json:"pending_directories"`
-	Regions               int      `json:"tracked_regions"`
-	Discovered            uint64   `json:"discovered_entries"`
-	Overflow              uint64   `json:"inventory_overflow"`
-	IndexRotations        uint64   `json:"index_rotations"`
-	Errors                uint64   `json:"errors"`
-	LastError             string   `json:"last_error,omitempty"`
-	ScannedBytes          int64    `json:"sampled_region_bytes"`
-	ObservedResidentBytes int64    `json:"sampled_resident_bytes_cumulative"`
-	AdviceBytes           int64    `json:"advice_bytes"`
-	NetReductionBytes     int64    `json:"observed_net_reduction_bytes"`
-	ReappearedBytes       int64    `json:"observed_reappeared_bytes"`
-	Protected             uint64   `json:"protected_regions"`
-	Ineffective           uint64   `json:"ineffective_advice"`
-	DeferredRetries       uint64   `json:"deferred_retries"`
-	Sweeps                uint64   `json:"inventory_sweeps"`
-	CompletedSweeps       uint64   `json:"completed_inventory_sweeps"`
-	FastDiscoveryFallback bool     `json:"fast_discovery_fallback"`
-	Rate                  int64    `json:"current_advice_rate_bytes_per_second"`
-	HintEvents            uint64   `json:"hint_events"`
-	HintOverflows         uint64   `json:"hint_overflows"`
-	Watches               int      `json:"directory_watches"`
-	HintFiles             int      `json:"hint_files"`
-	HintsAvailable        bool     `json:"access_hints_available"`
-	PendingHints          int      `json:"pending_hint_paths"`
-	HintRetries           uint64   `json:"hint_discovery_retries"`
-	HintDropped           uint64   `json:"hint_queue_dropped"`
-	FileScheduleVisits    uint64   `json:"file_schedule_visits"`
-	WaitingRescanVisits   uint64   `json:"waiting_rescan_visits"`
-	RecentWriteDeferrals  uint64   `json:"recent_write_deferrals"`
-	ChangedCandidates     uint64   `json:"changed_candidates"`
-	NonresidentCandidates uint64   `json:"nonresident_candidates"`
-	NoProgressBackoffs    uint64   `json:"no_progress_backoffs"`
-	SweepInProgress       bool     `json:"inventory_sweep_in_progress"`
-	SweepAgeSeconds       float64  `json:"inventory_sweep_age_seconds"`
-	LastSweepSeconds      float64  `json:"last_inventory_sweep_seconds"`
-	FileScanWaitSeconds   float64  `json:"file_scan_wait_seconds"`
+	Audit                 AuditSnapshot `json:"coverage_audit"`
+	PressureBoostActive   bool          `json:"pressure_boost_active"`
+	DetectedRoots         []string      `json:"detected_roots"`
+	Files                 int           `json:"indexed_files"`
+	Directories           int           `json:"pending_directories"`
+	Regions               int           `json:"tracked_regions"`
+	Discovered            uint64        `json:"discovered_entries"`
+	Overflow              uint64        `json:"inventory_overflow"`
+	IndexRotations        uint64        `json:"index_rotations"`
+	Errors                uint64        `json:"errors"`
+	LastError             string        `json:"last_error,omitempty"`
+	ScannedBytes          int64         `json:"sampled_region_bytes"`
+	ObservedResidentBytes int64         `json:"sampled_resident_bytes_cumulative"`
+	AdviceBytes           int64         `json:"advice_bytes"`
+	NetReductionBytes     int64         `json:"observed_net_reduction_bytes"`
+	ReappearedBytes       int64         `json:"observed_reappeared_bytes"`
+	Protected             uint64        `json:"protected_regions"`
+	Ineffective           uint64        `json:"ineffective_advice"`
+	DeferredRetries       uint64        `json:"deferred_retries"`
+	Sweeps                uint64        `json:"inventory_sweeps"`
+	CompletedSweeps       uint64        `json:"completed_inventory_sweeps"`
+	FastDiscoveryFallback bool          `json:"fast_discovery_fallback"`
+	Rate                  int64         `json:"current_advice_rate_bytes_per_second"`
+	HintEvents            uint64        `json:"hint_events"`
+	HintOverflows         uint64        `json:"hint_overflows"`
+	Watches               int           `json:"directory_watches"`
+	HintFiles             int           `json:"hint_files"`
+	HintsAvailable        bool          `json:"access_hints_available"`
+	PendingHints          int           `json:"pending_hint_paths"`
+	HintRetries           uint64        `json:"hint_discovery_retries"`
+	HintDropped           uint64        `json:"hint_queue_dropped"`
+	FileScheduleVisits    uint64        `json:"file_schedule_visits"`
+	WaitingRescanVisits   uint64        `json:"waiting_rescan_visits"`
+	RecentWriteDeferrals  uint64        `json:"recent_write_deferrals"`
+	ChangedCandidates     uint64        `json:"changed_candidates"`
+	NonresidentCandidates uint64        `json:"nonresident_candidates"`
+	NoProgressBackoffs    uint64        `json:"no_progress_backoffs"`
+	SweepInProgress       bool          `json:"inventory_sweep_in_progress"`
+	SweepAgeSeconds       float64       `json:"inventory_sweep_age_seconds"`
+	LastSweepSeconds      float64       `json:"last_inventory_sweep_seconds"`
+	FileScanWaitSeconds   float64       `json:"file_scan_wait_seconds"`
 }
 type fileEntry struct {
 	Path     string
@@ -71,6 +73,10 @@ type regionKey struct {
 	Offset   int64
 }
 type region struct {
+	CandidateID           uint64
+	AdvisedAt             time.Time
+	RecheckStage          int
+	LastRecheckResident   int64
 	Key                   regionKey
 	Path                  string
 	ID                    identity
@@ -109,6 +115,9 @@ func (b *budget) take(n float64) bool {
 }
 
 type engine struct {
+	audit                                 *scanAudit
+	boost                                 *atomic.Bool
+	boostWasActive                        bool
 	c                                     Config
 	roots                                 []string
 	dirs                                  []dirEntry
@@ -138,8 +147,9 @@ type engine struct {
 }
 
 func newEngine(c Config, roots []string) *engine {
-	e := &engine{c: c, roots: roots, known: map[string]*fileEntry{}, regions: map[regionKey]*region{}, rate: c.InitialReclaimBytesPerSecond}
+	e := &engine{audit: newScanAudit(), c: c, roots: roots, known: map[string]*fileEntry{}, regions: map[regionKey]*region{}, rate: c.InitialReclaimBytesPerSecond}
 	e.stats.DetectedRoots = append([]string{}, roots...)
+	e.auditRootRequests()
 	if c.AccessHints {
 		e.hints = newAccessHints()
 	}
@@ -156,10 +166,12 @@ func (e *engine) close() {
 func (e *engine) failure(err error) { e.stats.Errors++; e.stats.LastError = err.Error() }
 func (e *engine) add(path string, rootDev uint64) {
 	if e.c.excluded(path) || len(path) > 4096 {
+		e.auditSkip(path, "excluded_or_path_length", nil)
 		return
 	}
 	f, err := safeOpen(path)
 	if err != nil {
+		e.auditSkip(path, openSkipReason(err), nil)
 		if !errors.Is(err, os.ErrNotExist) {
 			e.failure(err)
 		}
@@ -171,7 +183,9 @@ func (e *engine) add(path string, rootDev uint64) {
 		e.failure(err)
 		return
 	}
+	e.auditOpen(path, id)
 	if !supportedFS(f) || (rootDev != 0 && id.Dev != rootDev) {
+		e.auditSkip(path, "filesystem_or_device", &id)
 		return
 	}
 	e.addIdentity(path, rootDev, id)
@@ -179,6 +193,7 @@ func (e *engine) add(path string, rootDev uint64) {
 func (e *engine) addChild(parent *os.File, name string, rootDev uint64) {
 	path := filepath.Join(e.dirInfo.Path, name)
 	if e.c.excluded(path) || len(path) > 4096 {
+		e.auditSkip(path, "excluded_or_path_length", nil)
 		return
 	}
 	if e.childFastUnavailable {
@@ -193,6 +208,7 @@ func (e *engine) addChild(parent *os.File, name string, rootDev uint64) {
 			e.add(path, rootDev)
 			return
 		}
+		e.auditSkip(path, openSkipReason(err), nil)
 		if !errors.Is(err, os.ErrNotExist) {
 			e.failure(err)
 		}
@@ -201,7 +217,9 @@ func (e *engine) addChild(parent *os.File, name string, rootDev uint64) {
 	e.addIdentity(path, rootDev, id)
 }
 func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
+	e.auditMetadata(path, id)
 	if rootDev != 0 && id.Dev != rootDev {
+		e.auditSkip(path, "cross_device", &id)
 		return
 	}
 	if id.Mode&syscall.S_IFMT == syscall.S_IFDIR {
@@ -210,6 +228,7 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 		}
 		if len(e.dirs) >= e.c.MaxDirectories {
 			e.stats.Overflow++
+			e.auditSkip(path, "directory_limit", &id)
 			return
 		}
 		e.dirs = append(e.dirs, dirEntry{path, id.Dev})
@@ -217,12 +236,17 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 	}
 	// Vendor PostgreSQL data files can be mode 0700. In an explicit paths
 	// scope, an execute bit is not evidence that a file is program code.
-	if id.Mode&syscall.S_IFMT != syscall.S_IFREG || id.Size < int64(os.Getpagesize()) ||
-		(e.c.Mode == "auto" && id.Mode&0111 != 0) {
+	if id.Mode&syscall.S_IFMT != syscall.S_IFREG || id.Size < int64(os.Getpagesize()) {
+		e.auditSkip(path, "not_regular_or_subpage", &id)
+		return
+	}
+	if e.c.Mode == "auto" && id.Mode&0111 != 0 && !e.c.executableData(path) {
+		e.auditSkip(path, "execute_bit_auto", &id)
 		return
 	}
 	base := filepath.Base(path)
 	if strings.Contains(base, ".so") || strings.HasSuffix(base, ".a") {
+		e.auditSkip(path, "library_name", &id)
 		return
 	}
 	if old := e.known[path]; old != nil {
@@ -297,6 +321,7 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 			e.dirs = e.dirs[1:]
 			f, err := safeOpen(e.dirInfo.Path)
 			if err != nil {
+				e.auditSkip(e.dirInfo.Path, openSkipReason(err), nil)
 				e.failure(err)
 				continue
 			}
@@ -334,11 +359,14 @@ func (e *engine) track(f *fileEntry, offset, length, res int64, now time.Time) {
 	}
 	if len(e.regions) >= e.c.MaxRegions {
 		e.stats.Overflow++
+		e.auditSkip(f.Path, "candidate_limit", &f.ID)
 		return
 	}
-	r := &region{Key: k, Path: f.Path, ID: f.ID, Length: length, Before: res, Due: now.Add(time.Duration(e.c.ProtectSeconds) * time.Second)}
+	e.audit.candidateID++
+	r := &region{CandidateID: e.audit.candidateID, Key: k, Path: f.Path, ID: f.ID, Length: length, Before: res, Due: now.Add(time.Duration(e.c.ProtectSeconds) * time.Second)}
 	e.regions[k] = r
 	e.queue = append(e.queue, r)
+	e.candidateEvent(r, "created", res, now)
 }
 func (e *engine) removeRegion(r *region) { delete(e.regions, r.Key) }
 func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
@@ -359,6 +387,8 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	}
 	f, err := safeOpen(r.Path)
 	if err != nil {
+		e.auditSkip(r.Path, openSkipReason(err), nil)
+		e.candidateEvent(r, "open_failed_terminal", -1, now)
 		e.removeRegion(r)
 		if !errors.Is(err, os.ErrNotExist) {
 			e.failure(err)
@@ -367,24 +397,39 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	}
 	defer f.Close()
 	id, err := statFile(f)
+	if err == nil {
+		e.auditOpen(r.Path, id)
+	}
 	if err != nil || !sameFile(id, r.ID) || !supportedFS(f) {
+		e.candidateEvent(r, "changed_terminal", -1, now)
 		e.stats.ChangedCandidates++
 		e.removeRegion(r)
 		return
 	}
 	res, err := resident(f, r.Key.Offset, r.Length)
 	if err != nil {
+		e.auditSkip(r.Path, "residency_unavailable", &id)
+		e.candidateEvent(r, "probe_failed_terminal", -1, now)
 		e.failure(err)
 		e.removeRegion(r)
 		return
 	}
+	e.auditQuery(r.Path, id, r.Key.Offset, r.Length, res, "recheck")
 	e.stats.ScannedBytes += r.Length
 	e.stats.ObservedResidentBytes += res
 	if r.Check {
-		again := max64(0, res-r.After)
+		r.RecheckStage++
+		e.candidateEvent(r, "delayed_recheck", res, now)
+		if r.RecheckStage == 1 && r.LastRecheckResident == 0 && r.After > 0 {
+			r.LastRecheckResident = r.After
+		}
+		again := max64(0, res-r.LastRecheckResident)
+		r.LastRecheckResident = res
 		e.stats.ReappearedBytes += again
-		if float64(again) > float64(max64(1, r.Before-r.After))*e.c.MaxReappearanceRatio {
+		e.auditGroup(r.Path).ReappearedBytes += again
+		if float64(max64(0, res-r.After)) > float64(max64(1, r.Before-r.After))*e.c.MaxReappearanceRatio {
 			e.stats.Protected++
+			e.candidateEvent(r, "reappearance_protected", res, now)
 			r.Until = now.Add(time.Duration(e.c.CooldownSeconds) * time.Second)
 			r.Check = false
 			e.rate = max64(e.c.InitialReclaimBytesPerSecond, e.rate/2)
@@ -400,6 +445,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			r.Before = res
 			r.Due = now.Add(time.Duration(e.c.RecheckSeconds) * time.Second)
 			e.stats.DeferredRetries++
+			e.candidateEvent(r, "retry_scheduled", res, now)
 			return
 		}
 		if r.NoProgress > 0 && r.Attempts >= 3 && res > 0 {
@@ -410,21 +456,32 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			r.Due = now.Add(noProgressDelay(e.c, r.NoProgress))
 			r.Until = r.Due
 			e.stats.NoProgressBackoffs++
+			e.candidateEvent(r, "no_progress_backoff", res, now)
 			return
 		}
+		if e.scheduleExtendedRecheck(r, now) {
+			return
+		}
+		e.candidateEvent(r, "completed_terminal", res, now)
 		e.removeRegion(r)
 		return
 	}
 	if res == 0 {
 		e.stats.NonresidentCandidates++
+		e.candidateEvent(r, "nonresident_terminal", res, now)
 		e.removeRegion(r)
 		return
 	}
 	if now.Sub(time.Unix(0, id.Mtime)) < time.Duration(e.c.MinFileAgeSeconds)*time.Second {
 		e.stats.RecentWriteDeferrals++
+		e.candidateEvent(r, "recent_write_deferred", res, now)
 		r.Due = now.Add(time.Duration(e.c.MinFileAgeSeconds) * time.Second)
 		return
 	}
+	g := e.auditGroup(r.Path)
+	g.EligibleBytes += res
+	g.EligiblePages += uint64(res / int64(os.Getpagesize()))
+	e.candidateEvent(r, "policy_eligible", res, now)
 	if !allow.Load() || now.Before(e.cooldown) || !e.revisit.take(float64(r.Length)) || !e.advice.take(float64(r.Length)) {
 		return
 	}
@@ -432,6 +489,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	// fadvise is advisory and this is deliberately not a clean-page guarantee.
 	check, err := statFile(f)
 	if err != nil || !sameFile(id, check) {
+		e.candidateEvent(r, "changed_before_advice_terminal", res, now)
 		e.removeRegion(r)
 		return
 	}
@@ -439,22 +497,31 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		return
 	}
 	if err = advise(f, r.Key.Offset, r.Length); err != nil {
+		e.candidateEvent(r, "advice_failed_deferred", res, now)
 		e.failure(err)
 		r.Due = now.Add(time.Duration(e.c.CooldownSeconds) * time.Second)
 		return
 	}
 	e.stats.AdviceBytes += r.Length
+	g.AdviceBytes += r.Length
 	r.Attempts++
+	r.AdvisedAt = now
+	r.RecheckStage = 0
+	e.candidateEvent(r, "advised", res, now)
 	after, err := resident(f, r.Key.Offset, r.Length)
 	if err != nil {
+		e.candidateEvent(r, "after_probe_failed_terminal", -1, now)
 		e.failure(err)
 		e.removeRegion(r)
 		return
 	}
+	e.auditQuery(r.Path, id, r.Key.Offset, r.Length, after, "after")
 	e.stats.ScannedBytes += r.Length
 	e.stats.ObservedResidentBytes += after
 	reduction := max64(0, res-after)
 	e.stats.NetReductionBytes += reduction
+	g.ReductionBytes += reduction
+	e.candidateEvent(r, "immediate_after", after, now)
 	if reduction == 0 {
 		e.stats.Ineffective++
 		r.NoProgress = minInt(4, r.NoProgress+1)
@@ -465,6 +532,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	}
 	r.Before = res
 	r.After = after
+	r.LastRecheckResident = after
 	r.Check = true
 	r.Due = now.Add(time.Duration(e.c.RecheckSeconds) * time.Second)
 }
@@ -510,9 +578,18 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	ordinaryRate := float64(e.c.DiscoverEntriesPerSecond) - hintRate
 	e.discovery.refill(now, ordinaryRate, math.Max(1, ordinaryRate))
 	e.hintDiscovery.refill(now, hintRate, math.Max(1, hintRate))
+	boostActive := allow.Load() && e.boost != nil && e.boost.Load()
+	if e.boostWasActive && !boostActive {
+		e.rate = e.c.InitialReclaimBytesPerSecond
+		e.nextIncrease = now.Add(30 * time.Second)
+	}
+	e.boostWasActive = boostActive
 	if !allow.Load() {
 		e.rate = e.c.InitialReclaimBytesPerSecond
 		e.advice.tokens = 0
+		e.nextIncrease = now.Add(30 * time.Second)
+	} else if e.boost != nil && e.boost.Load() && !now.Before(e.cooldown) {
+		e.rate = e.c.ReclaimBytesPerSecond
 		e.nextIncrease = now.Add(30 * time.Second)
 	} else if now.After(e.nextIncrease) && now.After(e.cooldown) {
 		e.rate = min64(e.c.ReclaimBytesPerSecond, e.rate+e.c.InitialReclaimBytesPerSecond)
@@ -584,6 +661,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		}
 		f, err := safeOpen(entry.Path)
 		if err != nil {
+			e.auditSkip(entry.Path, openSkipReason(err), nil)
 			if errors.Is(err, os.ErrNotExist) {
 				delete(e.known, entry.Path)
 				last := len(e.files) - 1
@@ -598,6 +676,9 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			continue
 		}
 		id, err := statFile(f)
+		if err == nil {
+			e.auditOpen(entry.Path, id)
+		}
 		if err != nil || id.Mode&syscall.S_IFMT != syscall.S_IFREG || !supportedFS(f) {
 			f.Close()
 			e.cursor++
@@ -614,14 +695,17 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		res, err := resident(f, entry.Offset, length)
 		f.Close()
 		if err != nil {
+			e.auditSkip(entry.Path, "residency_unavailable", &id)
 			e.failure(err)
 			e.cursor++
 			continue
 		}
+		e.auditQuery(entry.Path, id, entry.Offset, length, res, "initial")
 		e.stats.ScannedBytes += length
 		e.stats.ObservedResidentBytes += res
 		e.track(entry, entry.Offset, length, res, now)
 		entry.Offset += length
+		e.cursor++ // Region round-robin: a large file cannot monopolize the working index.
 	}
 	return e.snapshot(now)
 }
@@ -682,6 +766,8 @@ func (e *engine) snapshot(now time.Time) Counters {
 	e.stats.Directories = len(e.dirs)
 	e.stats.Regions = len(e.regions)
 	e.stats.Rate = e.rate
+	e.stats.PressureBoostActive = e.boostWasActive
+	e.stats.Audit = e.auditSnapshot()
 	if e.hints != nil {
 		e.stats.HintEvents = e.hints.events
 		e.stats.HintsAvailable = e.hints.fd >= 0

@@ -36,6 +36,9 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
   containercacheguard version
 
 auto 自动发现磁盘数据挂载、常用数据目录和 PGDATA；paths 仅处理 --path 或 paths 配置。
+auto默认跳过执行位文件；executable_data_paths可对显式数据根下的指定路径放开此一项规则。
+coverage_audit按目录/类型记录扫描/跳过/驻留/建议及候选事件；窗口唯一查询不等于完整覆盖。
+pressure_boost显式启用后在真实保护允许时加速至配置上限，需strict+bounded及完整替代信号。
 --path 可重复。默认 action=observe，不回收；enforce 才发出文件范围释放建议。
 --duration 30s 限制运行时长；默认持续运行。--config 支持完整 JSON 参数，未知参数报错。
 run 可覆盖 --cache-target-bytes、--reclaim-bytes-per-second、--cgroup-path、--state-file。
@@ -339,6 +342,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	}
 	defer lock.Close()
 	var allow atomic.Bool
+	var boost atomic.Bool
 	logs, e := newDailyLogger(c, os.Stdout, time.Now)
 	if e != nil {
 		return fmt.Errorf("daily logs unavailable; no advice started: %w", e)
@@ -386,6 +390,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	work := make(chan struct{}, 1)
 	results := make(chan Counters, 1)
 	eng := newEngine(c, roots)
+	eng.boost = &boost
 	go func() {
 		defer eng.close()
 		for {
@@ -409,6 +414,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	oomBaselineReady := m.Available["oom_kill_total"]
 	lastLog := time.Time{}
 	var previousLog *Status
+	var previousDecision *Decision
 	busySince := time.Time{}
 	var recovery recoveryGate
 	var external externalGuard
@@ -498,6 +504,19 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					s.Decision.Reason = "worker_slow_or_blocked"
 				}
 				s.Decision, s.Recovery = recovery.apply(c, s.Decision, now)
+				// A guard can clear Allow after policy evaluation. It must also
+				// clear the rate boost; the worker has no separate permission.
+				if !s.Decision.Allow {
+					s.Decision.PressureBoost = false
+				}
+				if previousDecision == nil || *previousDecision != s.Decision {
+					if e = logs.WriteJSON(guardTransitionLog(s, previousDecision)); e != nil {
+						allow.Store(false)
+						return e
+					}
+					copyDecision := s.Decision
+					previousDecision = &copyDecision
+				}
 				s.Diagnostics = diagnose(c, m, s.Decision)
 				if e = atomicJSON(c.StateFile, s); e != nil {
 					allow.Store(false)
@@ -513,6 +532,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					logged := s
 					previousLog = &logged
 				}
+				boost.Store(s.Decision.Allow && s.Decision.PressureBoost)
 				allow.Store(s.Decision.Allow && adviceFresh(c, m, time.Now()))
 				nextSample = now.Add(time.Duration(c.IntervalMS) * time.Millisecond)
 			}

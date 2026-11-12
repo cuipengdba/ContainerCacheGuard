@@ -48,10 +48,11 @@ type Metrics struct {
 	Error                 string          `json:"error,omitempty"`
 }
 type Decision struct {
-	State       string `json:"state"`
-	Reason      string `json:"reason"`
-	Allow       bool   `json:"allow"`
-	CacheTarget int64  `json:"cache_target_bytes"`
+	PressureBoost bool   `json:"pressure_boost"`
+	State         string `json:"state"`
+	Reason        string `json:"reason"`
+	Allow         bool   `json:"allow"`
+	CacheTarget   int64  `json:"cache_target_bytes"`
 }
 
 func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaseline int64) Decision {
@@ -122,7 +123,8 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 	if now.Sub(started) < time.Duration(c.WarmupSeconds)*time.Second {
 		return stop("OBSERVE", "warmup")
 	}
-	if c.Trigger != "always" {
+	boost := pressureBoostWanted(c, m)
+	if c.Trigger != "always" && !boost {
 		if d.CacheTarget == 0 {
 			return stop("SUSPENDED", "unlimited_cgroup_requires_cache_target")
 		}
@@ -139,6 +141,10 @@ func decide(c Config, m Metrics, started, now time.Time, paused bool, oomBaselin
 		d.Reason = "explicit_continuous_policy"
 	}
 	d.Allow = true
+	d.PressureBoost = boost
+	if boost {
+		d.Reason = "protected_pressure_boost"
+	}
 	if critical {
 		d.State = "CONTROL_CRITICAL"
 		d.Reason = "explicit_bounded_critical_reclaim"

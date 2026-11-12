@@ -72,6 +72,13 @@ def main():
         daily_files=list(daily.glob('containercacheguard-????-??-??.log'))
         assert len(daily_files)==1 and s['logging']['keep_days']==30 and s['logging']['max_total_bytes']==1000000000
         events=[json.loads(line) for line in daily_files[0].read_text().splitlines()]
+        assert any(e.get('event')=='guard_transition' and e.get('sampling_interval_ms')==100 and 'oom_kill_total' in e.get('metrics',{}) for e in events)
+        checks.append('sampled_guard_transitions_are_independent_of_periodic_status_logs')
+        audit=s['counters']['coverage_audit']
+        assert audit['groups'] and audit['roots'] and audit['scan_history_entries']<=cfg['max_scan_history']
+        assert any(g['initial_query_bytes_cumulative']>0 and g['window_new_query_bytes_cumulative']>0 and g['advice_range_bytes']>0 for g in audit['groups'])
+        assert audit['candidate_outcomes']['advised']>0 and audit['recent_candidate_events'] and audit['accounting_scope']
+        checks.append('real_file_coverage_and_candidate_identity_are_visible_and_bounded')
         assert any(e.get('event')=='daemon_started' for e in events) and any(e.get('event')=='daemon_stopped' for e in events)
         assert any(e.get('metrics',{}).get('current_bytes',0)>0 for e in events)
         checks.append('daily_file_console_and_lifecycle_logs')

@@ -16,3 +16,4 @@ __pycache__/
 /dependency-results.txt
 /scheduling-benchmark-results.log
 /collector-results.log
+/gib-results.json

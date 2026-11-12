@@ -7,6 +7,8 @@
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
+rc.16正在进行原生回归：新增覆盖归因、明确数据路径执行位例外、候选延迟复查与受保护压力加速；见[计划](docs/RC16-PLAN.zh.md)及[使用手册](docs/RC16-USAGE.zh.md)。原始现场原因仍待核对，测试通过后另记实际结果。
+
 **最新候选版为 [0.2.0-rc.15](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.15)**；[rc.14](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.14)一并完成。rc.14加固信号读取、许可到期和离线配置检查；rc.15增加缓存占用时间与覆盖统计、按实例比较改善和IO/尾延迟/自身开销。两架构分别86/93项顶层race单测、39/43项CLI、各3项采集器测试通过；静态程序和各6附件已核验，无Web。[两版计划](docs/RC14-RC15-PLAN.zh.md)、[最终交付](docs/RC14-RC15-DELIVERY.zh.md)、[rc.14手册](docs/RC14-USAGE.zh.md)、[rc.15手册](docs/RC15-USAGE.zh.md)。
 
 **候选发布不等于现场验收。** compare的telemetry_thresholds_met仅评价报告内的门槛，不证明因果或零驱逐；本轮未连接/修改171或94，未替换运行实例，真实PG14匹配备份恢复与48小时仍未通过。

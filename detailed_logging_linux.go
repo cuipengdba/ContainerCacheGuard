@@ -40,7 +40,10 @@ func startupLog(c Config, roots []string) map[string]any {
 		"message": "CCG已启动，Web服务已取消；通过每日日志及状态文件查看。释放建议量不等于实际回收量，普通文件页以外的内存不由CCG清理。",
 		"version": version, "commit": commit, "architecture": runtime.GOARCH, "pid": os.Getpid(),
 		"mode": c.Mode, "action": c.Action, "roots": roots, "exclude_paths": c.ExcludePaths,
-		"state_file": c.StateFile, "web_service_enabled": false,
+		"executable_data_paths": c.ExecutableDataPaths, "exclude_names": c.ExcludeNames,
+		"pressure_boost": c.PressureBoost, "critical_mode": c.CriticalMode,
+		"extended_recheck_seconds": c.ExtendedRecheckSeconds,
+		"state_file":               c.StateFile, "web_service_enabled": false,
 		"budgets": map[string]any{"cache_target_bytes": c.CacheTargetBytes, "cache_target_ratio": c.CacheTargetRatio,
 			"reclaim_bytes_per_second": c.ReclaimBytesPerSecond, "scan_bytes_per_second": c.ScanBytesPerSecond,
 			"max_cpu_percent": c.MaxCPUPercent, "max_rss_bytes": c.MaxRSSBytes, "sample_interval_ms": c.IntervalMS,
@@ -114,6 +117,7 @@ func logSampleUsable(s Status) bool {
 
 func explainDecision(d Decision) string {
 	text := map[string]string{
+		"protected_pressure_boost":                  "内存进入预警区，按显式压力增强配置处理已有合格候选；仍受全部保护及配置速率上限约束。",
 		"kubelet_eviction_headroom_low_or_pressure": "kubelet实际内存余量接近驱逐线或节点已报告MemoryPressure，停止新释放建议；应由外部流程止损备份。",
 		"kubelet_node_signal_unavailable":           "kubelet节点信号缺失、过期或来源不符，暂停新释放建议。",
 		"observation_only":                          "仅观察，不执行文件缓存释放。", "warmup": "启动预热中，暂不释放。",

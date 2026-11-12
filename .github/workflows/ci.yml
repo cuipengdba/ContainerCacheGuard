@@ -15,6 +15,17 @@ jobs:
           - {runner: ubuntu-24.04, arch: amd64}
           - {runner: ubuntu-24.04-arm, arch: arm64}
     runs-on: ${{ matrix.runner }}
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: ccg-isolated-ci-only
+          POSTGRES_DB: ccg_test
+        ports: [5432:5432]
+        options: >-
+          --memory=512m
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -56,6 +67,14 @@ jobs:
           set -euo pipefail
           go list -deps . > dependency-results.txt
           if grep -qx 'net/http' dependency-results.txt; then echo 'HTTP server dependency must be absent'; exit 1; fi
+      - name: Isolated GiB reclaim with PostgreSQL 14 SQL and local API probes
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: ccg-isolated-ci-only
+          PGDATABASE: ccg_test
+        run: python3 scripts/gib_reclaim.py dist/containercacheguard-linux-${{ matrix.arch }} --output gib-results.json
       - name: Detailed log encoding cost
         shell: bash
         run: |
