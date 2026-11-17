@@ -5,7 +5,7 @@ Requires root on an ephemeral VM, never run on an existing database/container.
 Real cgroup2/memory.reclaim and >=1GiB clean file cache; synthetic node envelope
 is explicitly NOT proof of kubelet eviction avoidance. No global drop_caches.
 """
-import argparse, datetime, hashlib, http.server, json, os, pathlib, platform
+import argparse, contextlib, datetime, hashlib, http.server, json, os, pathlib, platform
 import signal, statistics, subprocess, sys, tempfile, threading, time, urllib.request
 
 GiB=1<<30; MiB=1<<20
@@ -43,10 +43,13 @@ def main():
     report={'success':False,'scope':'isolated leaf cgroup; real kernel reclaim; synthetic node envelope; real PG14 SQL and local fixture API; not real DBS/HISDBS load, K8s eviction avoidance, or 48h acceptance',
             'architecture':platform.machine(),'kernel':platform.release(),'page_size':os.sysconf('SC_PAGE_SIZE'),
             'forbidden_operations_used':[],'modified_existing_cgroup_limits':False,'node_signal_synthetic':True,'kubernetes_eviction_acceptance':False}
-    procs=[];stop=threading.Event();cg=None;parent=None;server=None;probes=[];phase={'name':'baseline'}
+    procs=[];stop=threading.Event();cg=None;parent=None;server=None;probes=[];phase={'name':'baseline'};thread=None;loghandles=[]
+    # Keep the tree alive until all producers and child processes have really
+    # stopped. Removing it before the outer finally races atomic signal writes.
+    workspace=tempfile.TemporaryDirectory(prefix='ccg-kernel-')
     try:
         assert sql()=='10000'
-        with tempfile.TemporaryDirectory(prefix='ccg-kernel-') as tmp:
+        with contextlib.nullcontext(workspace.name) as tmp:
             w=pathlib.Path(tmp);w.chmod(0o755);data=w/'data';data.mkdir();payload=data/'cold';ready=w/'ready'
             parent=pathlib.Path('/sys/fs/cgroup')/('ccg-rc17-'+w.name);parent.mkdir()
             (parent/'cgroup.subtree_control').write_text('+memory +io');cg=parent/'fixture';cg.mkdir()
@@ -109,7 +112,6 @@ def main():
             thread=threading.Thread(target=produce,daemon=True);thread.start()
             time.sleep(10);phase['name']='kernel'
             # Start only new test client in our leaf; agent stays outside it.
-            loghandles=[]
             def start_agent():
                 f=(w/('agent-'+str(len(procs))+'.log')).open('w');loghandles.append(f)
                 p=subprocess.Popen([binary,'reclaim-agent','--config',str(agentcfg)],stdout=f,stderr=subprocess.STDOUT);procs.append(p);return p
@@ -149,18 +151,26 @@ def main():
         report['error']=str(exc);raise
     finally:
         stop.set()
+        if thread:thread.join(30)
         for p in reversed(procs):
             if p.poll() is None:
                 p.terminate()
                 try:p.wait(10)
                 except subprocess.TimeoutExpired:p.kill();p.wait(10)
-        if server:server.shutdown()
+        if server:server.shutdown();server.server_close()
+        for handle in loghandles:handle.close()
         if cg:
             try:cg.rmdir()
             except OSError:pass
         if parent:
             try:parent.rmdir()
             except OSError:pass
-        out.write_text(json.dumps(report,indent=2)+'\n')
-        print(json.dumps({k:v for k,v in report.items() if k not in ('samples','final_status')},indent=2))
+        try:
+            if thread and thread.is_alive():raise RuntimeError('signal producer did not exit; refusing fixture deletion')
+            workspace.cleanup()
+        except Exception as exc:
+            report['success']=False;report['cleanup_error']=str(exc);raise
+        finally:
+            out.write_text(json.dumps(report,indent=2)+'\n')
+            print(json.dumps({k:v for k,v in report.items() if k not in ('samples','final_status')},indent=2))
 if __name__=='__main__':main()
