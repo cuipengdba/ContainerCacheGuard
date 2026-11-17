@@ -202,6 +202,24 @@ func TestRC18TaskRegressionsAndUnsafeFiles(t *testing.T) {
 	}
 }
 
+func TestRC18TaskDirectoryReplacementIsNotIdle(t *testing.T) {
+	c, r := taskFixture(t)
+	atomicJSON(filepath.Join(c.TaskSignalDirectory, r.ID+".json"), r)
+	g := taskMonitor{}
+	if g.read(c, time.Now()).State != "ready" {
+		t.Fatal("initial task")
+	}
+	os.Rename(c.TaskSignalDirectory, c.TaskSignalDirectory+"-old")
+	os.Mkdir(c.TaskSignalDirectory, 0700)
+	if s := g.read(c, time.Now()); s.State != "unknown" || s.Error != "task_directory_identity_changed" || !taskProtects(s, "/backup/a") {
+		t.Fatal("replacement hidden active tasks")
+	}
+	t.Cleanup(func() {
+		os.Remove(filepath.Join(c.TaskSignalDirectory+"-old", r.ID+".json"))
+		os.Remove(c.TaskSignalDirectory + "-old")
+	})
+}
+
 func kubeFixture(t *testing.T) ([]byte, []byte, []byte, time.Time) {
 	t.Helper()
 	now := time.Now()

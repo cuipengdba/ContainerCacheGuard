@@ -35,7 +35,10 @@ type TaskStatus struct {
 	Time   time.Time    `json:"checked_at"`
 	Active []TaskRecord `json:"active"`
 }
-type taskMonitor struct{ previous map[string]TaskRecord }
+type taskMonitor struct {
+	previous    map[string]TaskRecord
+	directoryID *identity
+}
 
 func processStart(pid int) (string, error) {
 	if pid <= 0 {
@@ -90,6 +93,16 @@ func (g *taskMonitor) read(c Config, now time.Time) TaskStatus {
 	}
 	defer dir.Close()
 	// Bound even unrelated files. Overflow is NOT evidence that no task exists.
+	id, err := statFile(dir)
+	if err != nil {
+		return fail("task_directory_identity_unavailable")
+	}
+	if old := g.directoryID; old != nil && (old.Dev != id.Dev || old.Ino != id.Ino || old.UID != id.UID || old.Mode != id.Mode) {
+		return fail("task_directory_identity_changed")
+	}
+	if g.directoryID == nil {
+		g.directoryID = &id
+	}
 	names, err := dir.Readdirnames(c.MaxActiveTasks + 1)
 	if err != nil && len(names) == 0 && err.Error() != "EOF" {
 		return fail("task_directory_read_failed")
