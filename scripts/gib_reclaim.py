@@ -80,7 +80,8 @@ def main():
                        interval_ms=200,log_interval_seconds=1,worker_budget_ms=100,max_cpu_percent=50,max_rss_bytes=256<<20,
                        scan_bytes_per_second=512<<20,initial_reclaim_bytes_per_second=64<<20,reclaim_bytes_per_second=64<<20,
                        max_dirty_bytes=128<<20,max_io_bytes_per_second=512<<20,max_file_refaults_per_second=100000,max_io_psi_avg10=90,
-                       state_file=str(w/'observe/status.json'),log_directory=str(w/'observe/logs'))
+                       state_file=str(w/'observe/status.json'),log_directory=str(w/'observe/logs'),
+                       path_policies=[dict(path=str(data),role='backup-output',low_reuse=True,protect_seconds=1,min_file_age_seconds=0)])
             config=w/'config.json'; state=None
             def start(label):
                 nonlocal daemon,state
@@ -115,7 +116,7 @@ def main():
             else:raise AssertionError('1GiB advice reduction not reached; last='+json.dumps(status()))
             report['seconds_to_1gib_immediate_region_decrease']=time.monotonic()-began
             report['persistence']=[]
-            for delay in [0,5,15]:
+            for delay in [0,5,115]:
                 if delay:collect_for(delay,states)
                 value=resident();report['persistence'].append({'seconds_since_1gib_gate':time.monotonic()-began-report['seconds_to_1gib_immediate_region_decrease'],'resident_bytes':value,'decrease_from_observe_end_bytes':report['observe_end_resident_bytes']-value})
                 assert report['observe_end_resident_bytes']-value>=GiB,('GiB decrease not sustained',report['persistence'])

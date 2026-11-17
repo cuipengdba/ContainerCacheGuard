@@ -111,6 +111,8 @@ func TestKernelNoPSIRequiresConfirmedAbsenceAndFreshAlternatives(t *testing.T) {
 	k.RequestMaxBytes = 128 * MiB
 	k.MaxDiskAwaitMS = 20
 	k.MaxDiskQueue = 2
+	k.DiskDevices = []string{"8:0"}
+	s.Signal.DiskDevices = []string{"8:0"}
 	s.Metrics.IOPSI = nil
 	s.Metrics.MemoryPSI = nil
 	s.Signal.DiskTime = s.Metrics.Time

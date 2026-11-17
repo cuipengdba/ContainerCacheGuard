@@ -114,6 +114,13 @@ func (b *budget) take(n float64) bool {
 }
 
 type engine struct {
+	roles                                 *roleControl
+	roleVisits                            uint64
+	roleCursor                            int
+	inodePaths                            map[[2]uint64]string
+	aliasDenied                           map[[2]uint64]bool
+	roleRoots                             map[string]identity
+	aliasOverflow                         bool
 	audit                                 *scanAudit
 	boost                                 *atomic.Bool
 	boostWasActive                        bool
@@ -146,7 +153,7 @@ type engine struct {
 }
 
 func newEngine(c Config, roots []string) *engine {
-	e := &engine{audit: newScanAudit(), c: c, roots: roots, known: map[string]*fileEntry{}, regions: map[regionKey]*region{}, rate: c.InitialReclaimBytesPerSecond}
+	e := &engine{audit: newScanAudit(), inodePaths: map[[2]uint64]string{}, aliasDenied: map[[2]uint64]bool{}, c: c, roots: roots, known: map[string]*fileEntry{}, regions: map[regionKey]*region{}, rate: c.InitialReclaimBytesPerSecond}
 	e.stats.DetectedRoots = append([]string{}, roots...)
 	e.auditRootRequests()
 	if c.AccessHints {
@@ -239,8 +246,24 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 		e.auditSkip(path, reason, &id)
 		return
 	}
+	ik := [2]uint64{id.Dev, id.Ino}
+	if other := e.inodePaths[ik]; other != "" && other != path {
+		if e.c.pathPolicy(other).Role != e.c.pathPolicy(path).Role {
+			if len(e.aliasDenied) < e.c.MaxFiles {
+				e.aliasDenied[ik] = true
+			} else {
+				e.aliasOverflow = true
+			}
+			e.auditSkip(path, "inode_role_conflict", &id)
+		} else {
+			e.auditSkip(path, "duplicate_inode_alias", &id)
+		}
+		return
+	}
 	if old := e.known[path]; old != nil {
 		if !sameFile(old.ID, id) {
+			delete(e.inodePaths, [2]uint64{old.ID.Dev, old.ID.Ino})
+			e.inodePaths[ik] = path
 			old.ID = id
 			old.Offset = 0
 			old.NextScan = time.Time{}
@@ -261,13 +284,16 @@ func (e *engine) addIdentity(path string, rootDev uint64, id identity) {
 		e.evictCursor %= len(e.files)
 		old := e.files[e.evictCursor]
 		delete(e.known, old.Path)
+		delete(e.inodePaths, [2]uint64{old.ID.Dev, old.ID.Ino})
 		e.files[e.evictCursor] = n
 		e.evictCursor = (e.evictCursor + 1) % len(e.files)
 		e.known[path] = n
+		e.inodePaths[ik] = path
 		e.stats.IndexRotations++
 		return
 	}
 	e.known[path] = n
+	e.inodePaths[ik] = path
 	e.files = append(e.files, n)
 }
 func (e *engine) finishSweep(now time.Time) {
@@ -353,7 +379,7 @@ func (e *engine) track(f *fileEntry, offset, length, res int64, now time.Time) {
 		return
 	}
 	e.audit.candidateID++
-	r := &region{CandidateID: e.audit.candidateID, Key: k, Path: f.Path, ID: f.ID, Length: length, Before: res, Due: now.Add(time.Duration(e.c.ProtectSeconds) * time.Second)}
+	r := &region{CandidateID: e.audit.candidateID, Key: k, Path: f.Path, ID: f.ID, Length: length, Before: res, Due: now.Add(time.Duration(e.c.roleConfig(e.c.pathPolicy(f.Path)).ProtectSeconds) * time.Second)}
 	e.regions[k] = r
 	e.queue = append(e.queue, r)
 	e.candidateEvent(r, "created", res, now)
@@ -361,6 +387,9 @@ func (e *engine) track(f *fileEntry, offset, length, res int64, now time.Time) {
 func (e *engine) removeRegion(r *region) { delete(e.regions, r.Key) }
 func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	if now.Before(r.Due) || now.Before(r.Until) {
+		return
+	}
+	if !r.Check && (e.aliasOverflow || !e.roleAllows(r.Path, now) || e.aliasDenied[[2]uint64{r.Key.Dev, r.Key.Ino}]) {
 		return
 	}
 	// Do not spend the sampling budget repeatedly on a candidate that cannot
@@ -468,7 +497,8 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		e.removeRegion(r)
 		return
 	}
-	if now.Sub(time.Unix(0, id.Mtime)) < time.Duration(e.c.MinFileAgeSeconds)*time.Second {
+	policy := e.c.roleConfig(e.c.pathPolicy(r.Path))
+	if now.Sub(time.Unix(0, id.Mtime)) < time.Duration(policy.MinFileAgeSeconds)*time.Second {
 		e.stats.RecentWriteDeferrals++
 		e.candidateEvent(r, "recent_write_deferred", res, now)
 		r.Due = now.Add(time.Duration(e.c.MinFileAgeSeconds) * time.Second)
@@ -489,8 +519,17 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		e.removeRegion(r)
 		return
 	}
-	if !allow.Load() {
+	if !allow.Load() || !e.roleAllows(r.Path, time.Now()) || !e.roleRootUnchanged(r.Path) {
 		return
+	}
+	if e.c.pathPolicy(r.Path).Role == "backup-output" {
+		var st syscall.Stat_t
+		if syscall.Fstat(int(f.Fd()), &st) != nil || st.Nlink > 1 {
+			e.auditSkip(r.Path, "output_hardlink_unverified", &id)
+			e.candidateEvent(r, "output_hardlink_terminal", res, now)
+			e.removeRegion(r)
+			return
+		}
 	}
 	if err = advise(f, r.Key.Offset, r.Length); err != nil {
 		e.candidateEvent(r, "advice_failed_deferred", res, now)
@@ -605,10 +644,11 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		if e.qcursor >= len(e.queue) {
 			e.qcursor = 0
 		}
-		r := e.queue[e.qcursor]
+		selected := e.preferredCandidate(e.qcursor)
+		r := e.queue[selected]
 		if e.regions[r.Key] != r {
 			last := len(e.queue) - 1
-			e.queue[e.qcursor] = e.queue[last]
+			e.queue[selected] = e.queue[last]
 			e.queue[last] = nil
 			e.queue = e.queue[:last]
 			continue
@@ -660,6 +700,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			e.auditSkip(entry.Path, openSkipReason(err), nil)
 			if errors.Is(err, os.ErrNotExist) {
 				delete(e.known, entry.Path)
+				delete(e.inodePaths, [2]uint64{entry.ID.Dev, entry.ID.Ino})
 				last := len(e.files) - 1
 				e.files[e.cursor] = e.files[last]
 				e.files[last] = nil

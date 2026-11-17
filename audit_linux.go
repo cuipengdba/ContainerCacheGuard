@@ -16,6 +16,7 @@ import (
 // clean pages, cgroup ownership, or causal reclaim benefit.
 type AuditGroup struct {
 	Root               string            `json:"root"`
+	Role               string            `json:"path_role"`
 	Kind               string            `json:"file_type"`
 	OpenOperations     uint64            `json:"open_operations"`
 	MetadataOperations uint64            `json:"discovery_metadata_operations"`
@@ -51,6 +52,7 @@ type RootScope struct {
 	Filesystem string    `json:"filesystem,omitempty"`
 }
 type CandidateEvent struct {
+	Role               string    `json:"path_role,omitempty"`
 	Sequence           uint64    `json:"sequence"`
 	CandidateID        uint64    `json:"candidate_id"`
 	Time               time.Time `json:"time"`
@@ -179,6 +181,9 @@ func (e *engine) auditGroup(path string) *AuditGroup {
 		}
 	}
 	kind := fileKind(path)
+	if p := e.c.pathPolicy(path); p.Path != "" && len(p.Path) > len(rootMatch(root)) {
+		root = p.Path
+	}
 	key := root + "\x00" + kind
 	if g := e.audit.groups[key]; g != nil {
 		return g
@@ -202,6 +207,7 @@ func rootMatch(s string) string {
 }
 func (e *engine) auditOpen(path string, id identity) {
 	g := e.auditGroup(path)
+	g.Role = e.c.pathPolicy(path).Role
 	g.OpenOperations++
 	if id.Mode&0170000 == 0100000 {
 		g.OpenedLogicalBytes += max64(0, id.Size)
@@ -232,6 +238,7 @@ func (e *engine) auditMetadata(path string, id identity) {
 }
 func (e *engine) auditSkip(path, reason string, id *identity) {
 	g := e.auditGroup(path)
+	g.Role = e.c.pathPolicy(path).Role
 	g.Skipped++
 	g.SkipReasons[reason]++
 	if id == nil {
@@ -281,7 +288,7 @@ func (e *engine) candidateEvent(r *region, outcome string, res int64, now time.T
 		n := res
 		observed = &n
 	}
-	v := CandidateEvent{Sequence: e.audit.sequence, CandidateID: r.CandidateID, Time: now, Outcome: outcome, Path: r.Path, Device: r.Key.Dev, Inode: r.Key.Ino, Offset: r.Key.Offset, Length: r.Length, Attempts: r.Attempts, Recheck: r.RecheckStage, ResidentBytes: observed, SinceAdviceSeconds: since}
+	v := CandidateEvent{Role: e.c.pathPolicy(r.Path).Role, Sequence: e.audit.sequence, CandidateID: r.CandidateID, Time: now, Outcome: outcome, Path: r.Path, Device: r.Key.Dev, Inode: r.Key.Ino, Offset: r.Key.Offset, Length: r.Length, Attempts: r.Attempts, Recheck: r.RecheckStage, ResidentBytes: observed, SinceAdviceSeconds: since}
 	if len(e.audit.events) >= e.c.MaxCandidateEvents {
 		e.audit.events[e.audit.eventCursor] = v
 		e.audit.eventCursor = (e.audit.eventCursor + 1) % len(e.audit.events)

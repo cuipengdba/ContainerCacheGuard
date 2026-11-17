@@ -21,6 +21,9 @@ type KernelConstraint struct {
 
 // A separate versioned envelope leaves legacy node-signal consumers unchanged.
 type KernelSignal struct {
+	KubeletVersion      string             `json:"kubelet_version,omitempty"`
+	CollectedAt         time.Time          `json:"collected_at,omitempty"`
+	DiskDevices         []string           `json:"disk_devices,omitempty"`
 	Schema              int                `json:"schema_version"`
 	SourceID            string             `json:"source_id"`
 	NodeID              string             `json:"node_id"`
@@ -195,6 +198,9 @@ func kernelGuard(c Config, s KernelSample, boot string, now time.Time) string {
 		return "memory_psi_missing_not_confirmed_absent"
 	}
 	if k.GuardProfile == "no-psi-guarded" && m.IOPSI == nil {
+		if !sameDevices(k.DiskDevices, n.DiskDevices) {
+			return "disk_device_binding_missing_or_mismatched"
+		}
 		if !m.Available["io_psi_interface_absent"] {
 			return "psi_missing_not_confirmed_absent"
 		}

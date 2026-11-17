@@ -32,6 +32,8 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
   containercacheguard report --log-directory /var/log/containercacheguard [--format markdown|json|svg]
   containercacheguard run --config config.json [--mode auto|paths] [--action observe|enforce]
   containercacheguard reclaim-agent --config agent.json [--duration 5m]
+  containercacheguard task-run --directory /run/ccg/tasks --source-id dbs --instance-id dbs --stage backup --root /backup -- pg_basebackup [原参数]
+  containercacheguard node-collect --node NODE --source-id kubelet --output /run/ccg/node-v2.json [--legacy-output /run/ccg/node-v1.json]
   containercacheguard status [--state-file /tmp/containercacheguard/status.json]
   containercacheguard scan --path /data [--scan-bytes-per-second 268435456]
   containercacheguard version
@@ -39,6 +41,9 @@ const help = `ContainerCacheGuard — Linux 容器文件缓存常驻治理
 auto 自动发现磁盘数据挂载、常用数据目录和 PGDATA；paths 仅处理 --path 或 paths 配置。
 auto默认跳过执行位文件；executable_data_paths可对显式数据根下的指定路径放开此一项规则。
 coverage_audit按目录/类型记录扫描/跳过/驻留/建议及候选事件；窗口唯一查询不等于完整覆盖。
+path_policies区分database-source、backup-output、excluded；共享一个控制器总预算，不是独立内存限额。
+task-run完整传递原命令参数、退出码和信号，阶段文件不包含命令行或数据库密码。
+node-collect复用受认证kubectl读取kubelet原始信号，不提供Web、不关闭TLS验证、不写盘标定。
 pressure_boost显式启用后在真实保护允许时加速至配置上限，需strict+bounded及完整替代信号。
 --path 可重复。默认 action=observe，不回收；enforce 才发出文件范围释放建议。
 --duration 30s 限制运行时长；默认持续运行。--config 支持完整 JSON 参数，未知参数报错。
@@ -67,6 +72,10 @@ func (p *pathsFlag) Set(v string) error { *p = append(*p, v); return nil }
 func main() {
 	if e := entry(os.Args[1:]); e != nil {
 		fmt.Fprintln(os.Stderr, "ContainerCacheGuard:", e)
+		var task taskExit
+		if errors.As(e, &task) {
+			os.Exit(task.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -80,6 +89,12 @@ func entry(args []string) error {
 		return nil
 	}
 	cmd := args[0]
+	if cmd == "task-run" {
+		return taskRunCommand(args[1:])
+	}
+	if cmd == "node-collect" {
+		return nodeCollectCommand(args[1:])
+	}
 	if cmd == "reclaim-agent" {
 		return kernelAgentCommand(args[1:])
 	}
@@ -292,6 +307,8 @@ func atomicJSON(path string, v any) error {
 }
 
 type Status struct {
+	PathRoles         []RoleDecision    `json:"path_roles,omitempty"`
+	Tasks             TaskStatus        `json:"tasks"`
 	KernelReclaim     *KernelStatus     `json:"kernel_reclaim,omitempty"`
 	Signals           SignalStatus      `json:"signals"`
 	InstanceID        string            `json:"instance_id,omitempty"`
@@ -420,6 +437,16 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	results := make(chan Counters, 1)
 	eng := newEngine(c, roots)
 	eng.boost = &boost
+	var roles roleControl
+	if len(c.PathPolicies) > 0 || c.TaskSignalDirectory != "" {
+		eng.roles = &roles
+	}
+	if err := eng.bindRoleRoots(); err != nil {
+		eng.close()
+		return err
+	}
+	var tasks taskMonitor
+	roleRecovery := map[string]*recoveryGate{}
 	go func() {
 		defer eng.close()
 		for {
@@ -460,7 +487,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 			if e = atomicJSON(c.StateFile, s); e != nil {
 				return fmt.Errorf("final state write failed: %w", e)
 			}
-			return logs.WriteJSON(detailedStatusLog(s, previousLog))
+			return logs.WriteJSON(periodicStatusLog(c, s, previousLog))
 		case sig := <-sigs:
 			if sig == syscall.SIGUSR1 {
 				s.Paused = true
@@ -500,6 +527,8 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				s.Protection = &protection
 				s.Logging = logs.Status()
 				s.Decision = decide(c, m, started, now, s.Paused, oomBaseline)
+				s.Tasks = tasks.read(c, now)
+				s.PathRoles, s.Decision = roleDecisions(c, m, started, now, s.Paused, oomBaseline, s.Decision, roleRecovery)
 				s.Degraded = []string{}
 				if m.IOPSI == nil {
 					s.Degraded = append(s.Degraded, "io_PSI_unavailable")
@@ -559,7 +588,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				}
 				changed := previousLog == nil || s.Decision != previousLog.Decision || s.Paused != previousLog.Paused || s.Metrics.Error != previousLog.Metrics.Error
 				if now.Sub(lastLog) >= time.Duration(c.LogIntervalSeconds)*time.Second || (changed && now.Sub(lastLog) >= time.Second) {
-					if e = logs.WriteJSON(detailedStatusLog(s, previousLog)); e != nil {
+					if e = logs.WriteJSON(periodicStatusLog(c, s, previousLog)); e != nil {
 						allow.Store(false)
 						return fmt.Errorf("daily log write failed; stopping advice: %w", e)
 					}
@@ -567,6 +596,7 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					logged := s
 					previousLog = &logged
 				}
+				roles.snapshot.Store(&pathPermissions{Time: now, Roles: s.PathRoles, Tasks: s.Tasks})
 				boost.Store(s.Decision.Allow && s.Decision.PressureBoost)
 				allow.Store(s.Decision.Allow && adviceFresh(c, m, time.Now()))
 				nextSample = now.Add(time.Duration(c.IntervalMS) * time.Millisecond)

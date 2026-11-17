@@ -76,11 +76,41 @@ func chooseKernelTarget(targets []*kernelTarget) *kernelTarget {
 		if s.Phase != "PREPARING" || s.Request <= 0 || s.Episode == "" || t.heartbeat.AckEpisode != s.Episode || !t.heartbeat.FileIdle {
 			continue
 		}
-		if chosen == nil || t.registration.Priority < chosen.registration.Priority {
+		if chosen == nil || kernelTargetBefore(t, chosen) {
 			chosen = t
 		}
 	}
 	return chosen
+}
+
+// Bounded risk plus aging. An eligible peer eventually outranks a repeatedly
+// newly prepared peer; this never grants eligibility or resets an episode.
+func kernelTargetBefore(a, b *kernelTarget) bool {
+	if a.registration.Priority != b.registration.Priority {
+		return a.registration.Priority < b.registration.Priority
+	}
+	if a.prepared.IsZero() || b.prepared.IsZero() {
+		return !a.prepared.IsZero() && b.prepared.IsZero()
+	}
+	risk := func(t *kernelTarget) time.Duration {
+		ratio := 0.0
+		for _, l := range t.sample.Levels {
+			if l.Limit > 0 {
+				r := float64(l.Current) / float64(l.Limit)
+				if r > ratio {
+					ratio = r
+				}
+			}
+		}
+		if ratio > 1 {
+			ratio = 1
+		}
+		if ratio < 0 {
+			ratio = 0
+		}
+		return time.Duration(ratio * float64(30*time.Second))
+	}
+	return a.prepared.Add(-risk(a)).Before(b.prepared.Add(-risk(b)))
 }
 
 func (a *kernelAgent) supervise(now time.Time) error {

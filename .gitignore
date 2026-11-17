@@ -18,3 +18,4 @@ __pycache__/
 /collector-results.log
 /gib-results.json
 /kernel-results.json
+/same-container-results.json

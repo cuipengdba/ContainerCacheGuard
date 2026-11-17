@@ -22,6 +22,20 @@ type statusLogRecord struct {
 	Changes *logChanges         `json:"since_previous_log"`
 }
 
+// Full snapshots stay in state/journal and in the executor's event log.
+// Periodic logs retain identity, results, counts and requested recheck times.
+// Offline reporters consume only their established top-level metrics/counters.
+func periodicStatusLog(c Config, s Status, previous *Status) statusLogRecord {
+	if !c.LogKernelSnapshots && s.KernelReclaim != nil {
+		full := s.KernelReclaim
+		copy := *full
+		copy.Before = nil
+		copy.Observations = nil
+		s.KernelReclaim = &copy
+	}
+	return detailedStatusLog(s, previous)
+}
+
 type logChanges struct {
 	Valid          bool    `json:"valid"`
 	Reason         string  `json:"reason,omitempty"`

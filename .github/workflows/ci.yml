@@ -93,6 +93,8 @@ jobs:
           PGPASSWORD: ccg-isolated-ci-only
           PGDATABASE: ccg_test
         run: sudo --preserve-env=PGHOST,PGPORT,PGUSER,PGPASSWORD,PGDATABASE python3 scripts/kernel_reclaim.py dist/containercacheguard-linux-${{ matrix.arch }} --output kernel-results.json
+      - name: PG14 database backup and CCG in one disposable container
+        run: python3 scripts/same_container.py dist/containercacheguard-linux-${{ matrix.arch }} --output same-container-results.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

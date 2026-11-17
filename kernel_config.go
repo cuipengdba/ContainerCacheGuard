@@ -7,36 +7,37 @@ import (
 
 // KernelConfig is opt-in. It never changes a memory, IO, swap or CPU limit.
 type KernelConfig struct {
-	Enabled                   bool    `json:"enabled"`
-	Executor                  string  `json:"executor"`
-	GuardProfile              string  `json:"guard_profile"`
-	Scope                     string  `json:"scope"`
-	Socket                    string  `json:"socket"`
-	Target                    string  `json:"target"`
-	SignalFile                string  `json:"signal_file"`
-	SignalSourceID            string  `json:"signal_source_id"`
-	MaxCallsPerEpisode        int     `json:"max_calls_per_episode"`
-	MemoryTriggerRatio        float64 `json:"memory_trigger_ratio"`
-	MemoryRearmRatio          float64 `json:"memory_rearm_ratio"`
-	MinHeadroomBytes          int64   `json:"min_headroom_bytes"`
-	PredictSeconds            int     `json:"predict_seconds"`
-	NodeTriggerMarginBytes    int64   `json:"node_trigger_margin_bytes"`
-	NodeRearmExtraBytes       int64   `json:"node_rearm_extra_bytes"`
-	ConfirmSamples            int     `json:"confirm_samples"`
-	RequestMinBytes           int64   `json:"request_min_bytes"`
-	RequestMaxBytes           int64   `json:"request_max_bytes"`
-	FileBudgetRatio           float64 `json:"file_budget_ratio"`
-	MinFileEstimateBytes      int64   `json:"min_file_estimate_bytes"`
-	CallWatchdogMS            int     `json:"call_watchdog_ms"`
-	RecheckSeconds            []int   `json:"recheck_seconds"`
-	RearmHealthySeconds       int     `json:"rearm_healthy_seconds"`
-	MinEpisodeIntervalSeconds int     `json:"min_episode_interval_seconds"`
-	RequireSwapDisabled       bool    `json:"require_swap_disabled"`
-	StateDirectory            string  `json:"state_directory"`
-	MaxDiskAwaitMS            float64 `json:"max_disk_await_ms"`
-	MaxDiskQueue              float64 `json:"max_disk_queue"`
-	MaxMemoryPSIAvg10         float64 `json:"max_memory_psi_avg10"`
-	MinBusinessSamples        int     `json:"min_business_samples"`
+	DiskDevices               []string `json:"disk_devices,omitempty"`
+	Enabled                   bool     `json:"enabled"`
+	Executor                  string   `json:"executor"`
+	GuardProfile              string   `json:"guard_profile"`
+	Scope                     string   `json:"scope"`
+	Socket                    string   `json:"socket"`
+	Target                    string   `json:"target"`
+	SignalFile                string   `json:"signal_file"`
+	SignalSourceID            string   `json:"signal_source_id"`
+	MaxCallsPerEpisode        int      `json:"max_calls_per_episode"`
+	MemoryTriggerRatio        float64  `json:"memory_trigger_ratio"`
+	MemoryRearmRatio          float64  `json:"memory_rearm_ratio"`
+	MinHeadroomBytes          int64    `json:"min_headroom_bytes"`
+	PredictSeconds            int      `json:"predict_seconds"`
+	NodeTriggerMarginBytes    int64    `json:"node_trigger_margin_bytes"`
+	NodeRearmExtraBytes       int64    `json:"node_rearm_extra_bytes"`
+	ConfirmSamples            int      `json:"confirm_samples"`
+	RequestMinBytes           int64    `json:"request_min_bytes"`
+	RequestMaxBytes           int64    `json:"request_max_bytes"`
+	FileBudgetRatio           float64  `json:"file_budget_ratio"`
+	MinFileEstimateBytes      int64    `json:"min_file_estimate_bytes"`
+	CallWatchdogMS            int      `json:"call_watchdog_ms"`
+	RecheckSeconds            []int    `json:"recheck_seconds"`
+	RearmHealthySeconds       int      `json:"rearm_healthy_seconds"`
+	MinEpisodeIntervalSeconds int      `json:"min_episode_interval_seconds"`
+	RequireSwapDisabled       bool     `json:"require_swap_disabled"`
+	StateDirectory            string   `json:"state_directory"`
+	MaxDiskAwaitMS            float64  `json:"max_disk_await_ms"`
+	MaxDiskQueue              float64  `json:"max_disk_queue"`
+	MaxMemoryPSIAvg10         float64  `json:"max_memory_psi_avg10"`
+	MinBusinessSamples        int      `json:"min_business_samples"`
 }
 
 func defaultKernelConfig() KernelConfig {
@@ -74,7 +75,7 @@ func (c Config) validateKernel() error {
 	if k.MaxDiskAwaitMS < 0 || !finiteNonnegative(k.MaxDiskAwaitMS) || k.MaxDiskQueue < 0 || !finiteNonnegative(k.MaxDiskQueue) {
 		return fail()
 	}
-	if k.GuardProfile == "no-psi-guarded" && (k.RequestMaxBytes > 128*MiB || k.MaxDiskAwaitMS <= 0 || k.MaxDiskQueue <= 0) {
+	if k.GuardProfile == "no-psi-guarded" && (k.RequestMaxBytes > 128*MiB || k.MaxDiskAwaitMS <= 0 || k.MaxDiskQueue <= 0 || !validDeviceList(k.DiskDevices)) {
 		return fail()
 	}
 	if len(k.RecheckSeconds) == 0 || len(k.RecheckSeconds) > 8 {

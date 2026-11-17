@@ -14,6 +14,12 @@ const MiB int64 = 1 << 20
 
 // Config has no executable hooks and never changes cgroup limits.
 type Config struct {
+	PathPolicies                   []PathPolicy `json:"path_policies"`
+	TaskSignalDirectory            string       `json:"task_signal_directory,omitempty"`
+	TaskSourceID                   string       `json:"task_source_id,omitempty"`
+	TaskMaxAgeSeconds              int          `json:"task_max_age_seconds"`
+	MaxActiveTasks                 int          `json:"max_active_tasks"`
+	LogKernelSnapshots             bool         `json:"log_kernel_snapshots"`
 	KernelReclaim                  KernelConfig `json:"kernel_reclaim"`
 	ExecutableDataPaths            []string     `json:"executable_data_paths"`
 	PressureBoost                  bool         `json:"pressure_boost"`
@@ -90,6 +96,7 @@ type Config struct {
 
 func defaultConfig() Config {
 	return Config{
+		PathPolicies: []PathPolicy{}, TaskMaxAgeSeconds: 10, MaxActiveTasks: 32,
 		KernelReclaim:  defaultKernelConfig(),
 		MaxAuditGroups: 64, MaxScanHistory: 16384, MaxCandidateEvents: 32, ExecutableDataPaths: []string{}, ExtendedRecheckSeconds: []int{}, PressureBoostNodeHeadroomBytes: 1024 * MiB,
 		Mode: "auto", Action: "observe", Paths: []string{}, AutoRoots: []string{}, ExcludePaths: []string{},
@@ -127,6 +134,9 @@ func loadConfig(path string) (Config, error) {
 	return c, nil
 }
 func (c Config) validate() error {
+	if err := c.validateRoles(); err != nil {
+		return err
+	}
 	if err := c.validateKernel(); err != nil {
 		return err
 	}
@@ -240,6 +250,9 @@ func forbiddenRoot(p string) bool {
 	return false
 }
 func (c Config) excluded(p string) bool {
+	if c.pathPolicy(p).Role == "excluded" {
+		return true
+	}
 	if beneath(p, c.logDirectory()) {
 		return true
 	}
