@@ -1,6 +1,6 @@
 # rc.17：驱逐前单次内核主动回收
 
-本页对应正在验证的rc.17代码。候选验证完成前不作为生产推荐。旧配置默认`kernel_reclaim.enabled=false`，原文件回收行为保持兼容；开启新后端需要额外部署和真实信号，单纯替换二进制不会自动启用。
+rc.17已候选发布，结果见[实际交付](RC17-DELIVERY.zh.md)，候选不等于生产验收。2026-11-17本页按C039将部署示例改为数据库/备份同容器、两个业务目标；这是文档修订，不改变已发布程序或历史实验。旧配置默认`kernel_reclaim.enabled=false`，开启需额外部署和真实信号；rc.18路径角色等新增能力仍[仅在规划](RC18-PLAN.zh.md)。
 
 ## 它做什么
 
@@ -8,24 +8,23 @@
 
 内核可以多回收或少回收；不足时可能返回EAGAIN。任何返回、EINTR、短写都不自动重试。请求前先fsync持久登记，重启时未决调用转UNKNOWN，绝不当新事件再刷一次。看门狗只发出终止辅助进程的请求，不能保证打断不可中断的内核IO；锁随辅助进程保留到真实退出。[内核接口说明](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)。
 
-## 四容器怎么接入
+## 数据库与备份同容器怎么接入
 
-DBS、HISDBS、dbsbackup、hisdbsbackup各运行一个CCG `run`，属于自己的容器cgroup。节点另运行**同一个静态二进制**的`reclaim-agent`子命令。agent使用宿主机PID/cgroup视图，可写cgroup2，并仅登记这四个**叶子**目标；不能登记宿主根、Pod父级或其他容器。客户端不需要写cgroup权限。每个目标有独立配置、状态、日志；节点journal持久保存，不放在容器临时层。
+DBS、HISDBS各自原容器内运行数据库、原备份客户端和一个CCG `run`，各监控自己的实际容器cgroup，见[完整同容器方案](SAME-CONTAINER.zh.md)。不再新增dbsbackup/hisdbsbackup容器。每实例独立配置、状态与日志，原DBS调度保留。
 
 ```text
-DBS内CCG ───────────┐
-HISDBS内CCG ────────┼─ Unix Socket ─ 节点reclaim-agent ─ 固定登记的容器cgroup
-dbsbackup内CCG ─────┤                       └ 单个在途内核辅助进程
-hisdbsbackup内CCG ──┘
+dbs容器：PG14 + DBS + 备份/校验/同步 + 一个CCG ───┐
+hisdbs容器：PG14 + DBS + 备份/校验/同步 + 一个CCG ─┼─ Unix Socket ─ 节点reclaim-agent
+                                                └─ 固定登记两个业务叶子cgroup
 ```
 
-它不改变数据库与备份的同Pod/共享卷布局，也不跨目录释放别的cgroup。源端文件页按首次分配者计费，备份端读同一文件可能仍计在源cgroup；按路径可见性不能推断归属。agent直接回收登记的实际计费cgroup。
+关闭内核后端时不需要节点agent。启用时节点另运行同一静态二进制的`reclaim-agent`，核对宿主PID/cgroup视图、权限和两个目标；不向业务容器自动开放cgroup写权限。agent不是备份服务，也不需要PGDATA挂载。源与输出共享实际容器预算，memory.reclaim不能只选备份页，文件/WAL排除不约束它。每个真实cgroup仍只有一轮压力事件，任务开始结束不能重置唯一尝试，持久journal不能丢失。
 
-节点应有唯一agent，以宿主PID命名空间及完整cgroup2视图启动。Kubernetes/OpenShift的安全上下文、SELinux/SCC和具体CRI路径需在授权测试节点验证。不要给所有业务容器开放宿主cgroup写权限；不要仅因`root`就认为一定可写。首版Unix Socket权限为0600，非root客户端用agent的`socket_gid`指定专用共享组，Socket变0660；父目录由agent UID所有且不可被组/其他人写，客户端须有目录执行位。Socket路径可挂载同一个hostPath目录给四容器，不需要共享PGDATA给agent。
+节点应有唯一agent，以宿主PID命名空间及完整cgroup2视图启动。Kubernetes/OpenShift的安全上下文、SELinux/SCC和具体CRI路径需在授权测试节点验证。不要给所有业务容器开放宿主cgroup写权限；不要仅因`root`就认为一定可写。首版Unix Socket权限为0600，非root客户端用agent的`socket_gid`指定专用共享组，Socket变0660；父目录由agent UID所有且不可被组/其他人写，客户端须有目录执行位。Socket路径可挂载同一个hostPath目录给两个业务容器，不需要共享PGDATA给agent。
 
 ## 生成配置并启动
 
-先按原有`init-config`生成四份配置，保持`action=observe`检查真实cgroup和业务信号。下面是**需要合并进完整CCG配置**的增量字段，示例数值不是生产已标定阈值：
+先按原有`init-config`生成两份配置，保持`action=observe`检查真实cgroup和业务信号。下面是**需要合并进完整CCG配置**的增量字段，示例数值不是生产已标定阈值：
 
 ```json
 {
@@ -53,9 +52,9 @@ hisdbsbackup内CCG ──┘
 }
 ```
 
-DBS与两个备份容器改为各自target、business/signal文件和实例身份。agent读取的是宿主可见配置文件，内含signal/business路径也必须在agent命名空间指向相同真实文件；业务容器可通过只读挂载获得相同路径。agent启动时读取配置，不支持运行时热变更。
+DBS与HISDBS分别使用各自target、business/signal文件和实例身份；同容器的数据库/备份不重复登记为两个目标。agent读取的是宿主可见配置文件，内含signal/business路径也必须在agent命名空间指向相同真实文件；业务容器可通过只读挂载获得相同路径。agent启动时读取配置，不支持运行时热变更。
 
-agent配置：将下面四个cgroup占位值替换为`crictl inspect`/`/proc/<容器宿主PID>/cgroup`核实的实际systemd或cgroupfs叶子路径；容器重建后inode变化，须重新登记。不要照抄Docker/K8s路径。
+agent配置：将下面两个cgroup占位值替换为`crictl inspect`/`/proc/<容器宿主PID>/cgroup`核实的实际systemd或cgroupfs叶子路径；容器重建后inode变化，须重新登记。不要照抄Docker/K8s路径。
 
 ```json
 {
@@ -64,15 +63,13 @@ agent配置：将下面四个cgroup占位值替换为`crictl inspect`/`/proc/<�
   "state_directory":"/var/lib/containercacheguard/reclaim",
   "log_directory":"/var/log/containercacheguard-agent",
   "targets":[
-    {"name":"dbsbackup","cgroup":"/sys/fs/cgroup/REPLACE_DBSBACKUP_LEAF","config":"/etc/ccg/dbsbackup.json","peer_uid":0,"priority":0},
-    {"name":"hisdbsbackup","cgroup":"/sys/fs/cgroup/REPLACE_HISDBSBACKUP_LEAF","config":"/etc/ccg/hisdbsbackup.json","peer_uid":0,"priority":1},
     {"name":"dbs","cgroup":"/sys/fs/cgroup/REPLACE_DBS_LEAF","config":"/etc/ccg/dbs.json","peer_uid":0,"priority":10},
-    {"name":"hisdbs","cgroup":"/sys/fs/cgroup/REPLACE_HISDBS_LEAF","config":"/etc/ccg/hisdbs.json","peer_uid":0,"priority":11}
+    {"name":"hisdbs","cgroup":"/sys/fs/cgroup/REPLACE_HISDBS_LEAF","config":"/etc/ccg/hisdbs.json","peer_uid":0,"priority":10}
   ]
 }
 ```
 
-`peer_uid`填**实际CCG进程的宿主UID**，不是默认猜测数据库UID。rootless/user namespace和沙箱运行时尚未验收。priority越小越先；它只影响已满足全部资格并已停让的目标，不能迫使没通过资格的备份先执行。节点同一时刻只有一个写入，每30秒至多一次，5分钟最多请求1GiB。所有agent必须共享宿主`/run/containercacheguard-node`的固定锁及相同持久journal，不可用私有挂载绕过。
+`peer_uid`填**实际CCG进程的宿主UID**，不是默认猜测数据库UID。rootless/user namespace和沙箱运行时尚未验收。priority是容器级静态顺序，越小越先；仅对已通过资格且已停让的目标有效，不能表示同容器内备份页优先。示例两个业务目标同级，rc.17同级选择按已有登记顺序，不把rc.18计划的公平调度当成现有能力。节点同一时刻只有一个写入，每30秒至多一次，5分钟最多请求1GiB。所有agent必须共享宿主`/run/containercacheguard-node`的固定锁及相同持久journal，不可用私有挂载绕过。
 
 ```sh
 # 由节点管理员创建受保护目录。不要改业务数据目录权限。
@@ -138,4 +135,4 @@ agent日志遵守每天一个文件、30天/1GB；journal独立管理，不跟�
 
 ## 验收边界
 
-原生双架构回归和真实内核隔离结果将写入交付文档及Release附件。隔离实验使用合成node信号隔离测试cgroup触发，不等于真实kubelet驱逐实验；SQL/API来自独立PG14探针，不是1200模式实际重放。生产schema2采集器、无PSI真实盘关联、94四角色匹配压力/备份恢复及48小时均需另行验收。inactive_file本来就可能被kubelet扣除，必须分别看容器总内存、文件缓存与节点驱逐余量。
+原生双架构回归和真实内核隔离结果将写入交付文档及Release附件。隔离实验使用合成node信号隔离测试cgroup触发，不等于真实kubelet驱逐实验；SQL/API来自独立PG14探针，不是1200模式实际重放。生产schema2采集器、无PSI真实盘关联、94两库同容器匹配压力/备份恢复及48小时均需另行验收。inactive_file本来就可能被kubelet扣除，必须分别看容器总内存、文件缓存与节点驱逐余量。

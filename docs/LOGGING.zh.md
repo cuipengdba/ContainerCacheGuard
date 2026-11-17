@@ -42,16 +42,14 @@
 
 更改后只重启CCG进程。目录及文件分别以0700、0600创建，必须属于运行CCG的UID；已有权限过宽的目录不会被静默接管。程序拒绝符号链接、硬链接、多写进程共用目录和同名FIFO等异常对象。日志目录自动排除在CCG治理范围外。
 
-## 四个容器怎么放
+## 当前两个容器怎么放
 
 | 实例 | 示例`log_directory` |
 | --- | --- |
 | dbs | `/opt/ccg/state/logs/dbs` |
 | hisdbs | `/opt/ccg/state/logs/hisdbs` |
-| dbsbackup | `/opt/ccg/state/logs/dbsbackup` |
-| hisdbsbackup | `/opt/ccg/state/logs/hisdbsbackup` |
 
-把状态/日志目录放到可写的磁盘持久卷或现有专用宿主机挂载，避免tmpfs或内存型emptyDir，并为实际UID准备权限。四个实例各用自己的目录；共享同一个宿主卷时也要分子目录。只放在容器可写层，重建容器后可能丢日志。不要放入PGDATA或某一次`pg_basebackup`的输出目录，以免混入数据库或备份内容。这里是接入示例，不表示已经替换94运行实例。
+数据库、备份和一个CCG放在各自原DBS/HISDBS容器内，详见[当前同容器设计](SAME-CONTAINER.zh.md)。把状态/日志目录放到可写的磁盘持久卷或现有专用宿主机挂载，避免tmpfs或内存型emptyDir，并为实际UID准备权限。两个实例各用自己的目录；共享同一个宿主卷时也要分子目录。只放在容器可写层，重建容器后可能丢日志。不要放入PGDATA或某一次`pg_basebackup`输出目录。旧dbsbackup/hisdbsbackup日志属于历史实例，不应合并计数或因文档修订自动删除。这里是接入约定，不表示已调整94。
 
 ## 怎么查看与确认清理
 

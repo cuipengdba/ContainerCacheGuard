@@ -1,5 +1,7 @@
 # DBS/HISDBS 与独立备份容器：部署、日志和状态
 
+> **历史方案，已于2026-11-17由C039替代。** 当前数据库与备份留在同一容器，DBS/HISDBS各一个CCG，不再要求dbsbackup/hisdbsbackup服务。新接入以[同容器说明](SAME-CONTAINER.zh.md)和[rc.18计划](RC18-PLAN.zh.md)为准。下文保留旧架构命令和当时记录供审计，不应照此新建四容器；服务器并未因文档更新自动迁移。
+
 本页给运维人员一条可检查的接入路线。ContainerCacheGuard（下称 CCG）是常驻进程，不替代 PostgreSQL、DBS 或 `pg_basebackup`。当前94迁移与验证目标为 **PostgreSQL 14.19**；通用接入模板与按日期记录的现场结果分别说明，部署状态以最新记录为准，不能由配置模板推断验收通过。
 
 2026-11-10更新：94四实例已实际替换为rc.11，完成每日持久日志及无Web监听核验；两业务Pod未重建。94内核PSI未启用，HIS备份实例按保护暂停回收，整体业务验收仍未通过。[本次实际配置、检查与回退](deployment-rc11-four-containers.zh.md)优先于下方按日期保留的旧版现场状态。
