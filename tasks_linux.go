@@ -260,7 +260,10 @@ func taskRunCommand(args []string) error {
 				}
 				return err
 			}
-			return signalErr
+			if signalErr != nil {
+				fmt.Fprintln(os.Stderr, "task-run: heartbeat failed; original task succeeded; stale marker retained")
+			}
+			return nil
 		case sig := <-sigs:
 			_ = syscall.Kill(-child.Process.Pid, sig.(syscall.Signal))
 		case <-tick.C:

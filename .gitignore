@@ -19,3 +19,4 @@ __pycache__/
 /gib-results.json
 /kernel-results.json
 /same-container-results.json
+/rc18-cli-results.json

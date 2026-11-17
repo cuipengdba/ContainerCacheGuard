@@ -87,6 +87,33 @@ func TestRC18RootReplacementRevokesAdvice(t *testing.T) {
 		t.Fatal("replacement granted")
 	}
 }
+
+func TestRC18InodeIndexTracksReplacementWithoutGrowing(t *testing.T) {
+	c := defaultConfig()
+	e := newEngine(c, nil)
+	defer e.close()
+	entry := &fileEntry{Path: "/data/file", ID: identity{Dev: 1, Ino: 1}}
+	e.inodePaths[[2]uint64{1, 1}] = entry.Path
+	for i := uint64(2); i < 100; i++ {
+		if !e.refreshIndexedIdentity(entry, identity{Dev: 1, Ino: i}) || len(e.inodePaths) != 1 {
+			t.Fatal("stale identity map growth")
+		}
+	}
+}
+func TestRC18TemplatesAreObserveAndShareOneBudget(t *testing.T) {
+	for _, name := range []string{"dbs", "hisdbs"} {
+		c, err := loadConfig(filepath.Join("deploy", "rc18", name+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = c.validate(); err != nil {
+			t.Fatal(err)
+		}
+		if c.Action != "observe" || c.KernelReclaim.Enabled || len(c.PathPolicies) != 2 || c.TaskSignalDirectory == "" || c.InstanceID != name || len(c.Paths) != 2 {
+			t.Fatal("unsafe template", name)
+		}
+	}
+}
 func TestRC18PriorityStillVisitsSource(t *testing.T) {
 	e := newEngine(defaultConfig(), nil)
 	defer e.close()
@@ -294,6 +321,7 @@ func TestRC18NoPSIOutputPermissionNeverLeaksToSource(t *testing.T) {
 	c.KernelReclaim.MaxDiskAwaitMS = 10
 	c.KernelReclaim.MaxDiskQueue = 1
 	n := KernelSignal{Schema: 2, NodeID: c.NodeID, SourceID: c.KernelReclaim.SignalSourceID, BootID: boot, Time: m.Time, DiskTime: m.Time, DiskDevices: []string{"8:0"}, DiskAwaitMS: kp(0.0), DiskQueue: kp(0.0), BusinessTime: m.Time, BusinessSamples: kp(100), BusinessErrorRate: kp(0.0)}
+	n.BusinessSourceID = c.BusinessSourceID
 	if e := atomicJSON(c.KernelReclaim.SignalFile, n); e != nil {
 		t.Fatal(e)
 	}

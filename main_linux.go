@@ -529,6 +529,11 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				s.Decision = decide(c, m, started, now, s.Paused, oomBaseline)
 				s.Tasks = tasks.read(c, now)
 				s.PathRoles, s.Decision = roleDecisions(c, m, started, now, s.Paused, oomBaseline, s.Decision, roleRecovery)
+				if s.Tasks.State == "unknown" {
+					s.Decision.Allow = false
+					s.Decision.State = "SUSPENDED"
+					s.Decision.Reason = "task_signal_unknown"
+				}
 				s.Degraded = []string{}
 				if m.IOPSI == nil {
 					s.Degraded = append(s.Degraded, "io_PSI_unavailable")

@@ -61,6 +61,8 @@ jobs:
           ! readelf -d dist/containercacheguard-linux-${{ matrix.arch }} | grep -q NEEDED
       - name: CLI integration
         run: python3 scripts/integration.py dist/containercacheguard-linux-${{ matrix.arch }} --output integration-results.json
+      - name: rc18 task wrapper lifecycle and signal integration
+        run: python3 scripts/rc18_cli.py dist/containercacheguard-linux-${{ matrix.arch }} --output rc18-cli-results.json
       - name: No HTTP service dependencies
         shell: bash
         run: |

@@ -455,6 +455,7 @@ func nodeCollectCommand(args []string) error {
 	defer cancel()
 	var previous map[string]diskCounter
 	var diskAt time.Time
+	var previousDevices []string
 	for {
 		err := func() error {
 			nb, e := kubeGet(ctx, *node, "node")
@@ -503,7 +504,7 @@ func nodeCollectCommand(args []string) error {
 				diskValid = false
 			}
 			at := time.Now()
-			if diskValid && previous != nil {
+			if diskValid && previous != nil && sameDevices(previousDevices, list) {
 				a, q, err := diskInterval(previous, current, list, at.Sub(diskAt).Seconds())
 				if err == nil {
 					n.DiskTime = at
@@ -513,6 +514,7 @@ func nodeCollectCommand(args []string) error {
 				}
 			}
 			previous = current
+			previousDevices = append([]string{}, list...)
 			diskAt = at
 			if *businessFile != "" {
 				var b struct {
@@ -523,6 +525,7 @@ func nodeCollectCommand(args []string) error {
 				}
 				if kernelTrustedFile(*businessFile) == nil && readRegularJSON(*businessFile, 16384, &b, false) == nil && b.Source == *businessSource && freshKernel(b.Time, now, 5*time.Second) && b.Samples != nil && *b.Samples >= 0 && b.Errors != nil && finiteNonnegative(*b.Errors) && *b.Errors <= 1 {
 					n.BusinessTime = b.Time
+					n.BusinessSourceID = b.Source
 					n.BusinessSamples = b.Samples
 					n.BusinessErrorRate = b.Errors
 				}

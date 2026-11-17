@@ -21,6 +21,7 @@ type KernelConstraint struct {
 
 // A separate versioned envelope leaves legacy node-signal consumers unchanged.
 type KernelSignal struct {
+	BusinessSourceID    string             `json:"business_source_id,omitempty"`
 	KubeletVersion      string             `json:"kubelet_version,omitempty"`
 	CollectedAt         time.Time          `json:"collected_at,omitempty"`
 	DiskDevices         []string           `json:"disk_devices,omitempty"`
@@ -189,6 +190,9 @@ func kernelGuard(c Config, s KernelSample, boot string, now time.Time) string {
 	}
 	if !freshKernel(m.BusinessTime, now, 5*time.Second) || m.BusinessSourceID != c.BusinessSourceID || !n.BusinessTime.Equal(m.BusinessTime) || n.BusinessSamples == nil || *n.BusinessSamples < k.MinBusinessSamples || n.BusinessErrorRate == nil || !finiteNonnegative(*n.BusinessErrorRate) || *n.BusinessErrorRate != 0 {
 		return "business_coverage_or_errors"
+	}
+	if n.BusinessSourceID != "" && n.BusinessSourceID != c.BusinessSourceID {
+		return "business_envelope_source_mismatch"
 	}
 	// Reuse all configured resource/IO/refault/business guards, independently
 	// of the old memory-critical pause (which is this backend's trigger).

@@ -1,0 +1,45 @@
+{
+  "mode": "paths",
+  "action": "observe",
+  "paths": [
+    "/data/pgdata",
+    "/backup"
+  ],
+  "state_file": "/opt/ccg/dbs/status.json",
+  "log_directory": "/opt/ccg/dbs/logs",
+  "log_keep_days": 30,
+  "log_max_total_bytes": 1000000000,
+  "log_timezone": "Asia/Shanghai",
+  "cache_target_bytes": 1073741824,
+  "protect_seconds": 30,
+  "min_file_age_seconds": 30,
+  "reclaim_bytes_per_second": 16777216,
+  "initial_reclaim_bytes_per_second": 4194304,
+  "scan_bytes_per_second": 134217728,
+  "worker_budget_ms": 10,
+  "max_cpu_percent": 3,
+  "max_rss_bytes": 134217728,
+  "max_io_psi_avg10": 10,
+  "critical_mode": "pause",
+  "instance_id": "dbs",
+  "path_policies": [
+    {
+      "path": "/data/pgdata",
+      "role": "database-source",
+      "protect_seconds": 120,
+      "min_file_age_seconds": 60
+    },
+    {
+      "path": "/backup",
+      "role": "backup-output",
+      "low_reuse": true,
+      "protect_seconds": 30,
+      "min_file_age_seconds": 30
+    }
+  ],
+  "task_signal_directory": "/opt/ccg/dbs/tasks",
+  "task_source_id": "dbs-tasks",
+  "task_max_age_seconds": 10,
+  "max_active_tasks": 32,
+  "log_kernel_snapshots": false
+}

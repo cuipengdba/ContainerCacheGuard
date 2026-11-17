@@ -729,7 +729,19 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			continue
 		}
 		if !sameFile(id, entry.ID) {
-			entry.ID = id
+			if !e.refreshIndexedIdentity(entry, id) {
+				delete(e.known, entry.Path)
+				if key := [2]uint64{entry.ID.Dev, entry.ID.Ino}; e.inodePaths[key] == entry.Path {
+					delete(e.inodePaths, key)
+				}
+				last := len(e.files) - 1
+				e.files[e.cursor] = e.files[last]
+				e.files[last] = nil
+				e.files = e.files[:last]
+				f.Close()
+				e.invalidateScanWait()
+				continue
+			}
 			entry.Offset = 0
 			entry.NextScan = time.Time{}
 			f.Close()

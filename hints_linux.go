@@ -261,7 +261,10 @@ func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 		if err != nil || !sameFile(id, entry.ID) {
 			f.Close()
 			if err == nil && id.Dev == entry.ID.Dev && id.Ino == entry.ID.Ino {
-				entry.ID = id
+				if !e.refreshIndexedIdentity(entry, id) {
+					h.cursor++
+					continue
+				}
 				entry.Offset = 0
 				entry.NextScan = time.Time{}
 				e.invalidateScanWait()

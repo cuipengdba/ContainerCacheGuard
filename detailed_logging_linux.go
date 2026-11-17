@@ -15,25 +15,36 @@ import (
 // Summary and interval changes use only existing snapshots, never extra scans.
 type statusLogRecord struct {
 	Status
-	Event   string              `json:"event"`
-	Level   string              `json:"level"`
-	Message string              `json:"message"`
-	Summary map[string]*float64 `json:"summary"`
-	Changes *logChanges         `json:"since_previous_log"`
+	Event        string              `json:"event"`
+	Level        string              `json:"level"`
+	Message      string              `json:"message"`
+	Summary      map[string]*float64 `json:"summary"`
+	Changes      *logChanges         `json:"since_previous_log"`
+	KernelDetail *kernelLogReference `json:"kernel_detail,omitempty"`
+}
+
+type kernelLogReference struct {
+	Episode       string `json:"episode"`
+	SnapshotCount int    `json:"snapshot_count"`
+	Details       string `json:"details"`
 }
 
 // Full snapshots stay in state/journal and in the executor's event log.
 // Periodic logs retain identity, results, counts and requested recheck times.
 // Offline reporters consume only their established top-level metrics/counters.
 func periodicStatusLog(c Config, s Status, previous *Status) statusLogRecord {
+	var reference *kernelLogReference
 	if !c.LogKernelSnapshots && s.KernelReclaim != nil {
 		full := s.KernelReclaim
+		reference = &kernelLogReference{Episode: full.Episode, SnapshotCount: len(full.Observations), Details: "full state file; persistent node journal; reclaim-agent event logs"}
 		copy := *full
 		copy.Before = nil
 		copy.Observations = nil
 		s.KernelReclaim = &copy
 	}
-	return detailedStatusLog(s, previous)
+	r := detailedStatusLog(s, previous)
+	r.KernelDetail = reference
+	return r
 }
 
 type logChanges struct {
@@ -131,6 +142,8 @@ func logSampleUsable(s Status) bool {
 
 func explainDecision(d Decision) string {
 	text := map[string]string{
+		"path_role_subset_allowed":                  "至少一个路径策略允许；具体目录仍受path_roles、任务阶段、身份及统一预算约束。",
+		"task_signal_unknown":                       "任务信号缺失、过期、身份不符或目录溢出，暂停新的文件释放；不推断备份已经结束。",
 		"protected_pressure_boost":                  "内存进入预警区，按显式压力增强配置处理已有合格候选；仍受全部保护及配置速率上限约束。",
 		"kubelet_eviction_headroom_low_or_pressure": "kubelet实际内存余量接近驱逐线或节点已报告MemoryPressure，停止新释放建议；应由外部流程止损备份。",
 		"kubelet_node_signal_unavailable":           "kubelet节点信号缺失、过期或来源不符，暂停新释放建议。",

@@ -172,7 +172,7 @@ func roleDecisions(c Config, m Metrics, started, now time.Time, paused bool, oom
 		}
 		var until time.Time
 		if p.LimitedOutput {
-			until = roleDiskGuard(c, now)
+			until = roleDiskGuard(c, m, now)
 			if until.IsZero() {
 				d.Allow = false
 				d.State = "SUSPENDED"
@@ -218,13 +218,16 @@ func sameDevices(a, b []string) bool {
 	sort.Strings(b)
 	return strings.Join(a, ",") == strings.Join(b, ",")
 }
-func roleDiskGuard(c Config, now time.Time) time.Time {
+func roleDiskGuard(c Config, m Metrics, now time.Time) time.Time {
 	k := c.KernelReclaim
 	var n KernelSignal
 	if readTrustedKernelJSON(k.SignalFile, 32768, &n) != nil {
 		return time.Time{}
 	}
 	boot, e := readBootID()
+	if n.BusinessSourceID != c.BusinessSourceID || !n.BusinessTime.Equal(m.BusinessTime) {
+		return time.Time{}
+	}
 	if e != nil || n.Schema != 2 || n.NodeID != c.NodeID || n.SourceID != k.SignalSourceID || n.BootID != boot || !freshKernel(n.Time, now, 15*time.Second) || !freshKernel(n.DiskTime, now, 5*time.Second) || !sameDevices(k.DiskDevices, n.DiskDevices) || n.DiskAwaitMS == nil || n.DiskQueue == nil || !finiteNonnegative(*n.DiskAwaitMS) || !finiteNonnegative(*n.DiskQueue) || *n.DiskAwaitMS > k.MaxDiskAwaitMS || *n.DiskQueue > k.MaxDiskQueue || !freshKernel(n.BusinessTime, now, 5*time.Second) || n.BusinessSamples == nil || *n.BusinessSamples < 20 || n.BusinessErrorRate == nil || *n.BusinessErrorRate != 0 {
 		return time.Time{}
 	}
@@ -286,13 +289,38 @@ func (e *engine) preferredCandidate(fallback int) int {
 	if len(e.c.PathPolicies) == 0 || e.roleVisits%4 == 0 {
 		return fallback
 	}
+	now := time.Now()
 	for i := 0; i < minInt(16, len(e.queue)); i++ {
 		j := (e.roleCursor + i) % len(e.queue)
 		r := e.queue[j]
-		if e.c.pathPolicy(r.Path).Role == "backup-output" && e.regions[r.Key] == r {
+		if e.c.pathPolicy(r.Path).Role == "backup-output" && e.regions[r.Key] == r && !now.Before(r.Due) && !now.Before(r.Until) {
 			e.roleCursor = (j + 1) % len(e.queue)
 			return j
 		}
 	}
 	return fallback
+}
+
+func (e *engine) refreshIndexedIdentity(entry *fileEntry, id identity) bool {
+	oldKey := [2]uint64{entry.ID.Dev, entry.ID.Ino}
+	newKey := [2]uint64{id.Dev, id.Ino}
+	if other := e.inodePaths[newKey]; other != "" && other != entry.Path {
+		if e.c.pathPolicy(other).Role != e.c.pathPolicy(entry.Path).Role {
+			if len(e.aliasDenied) < e.c.MaxFiles {
+				e.aliasDenied[newKey] = true
+			} else {
+				e.aliasOverflow = true
+			}
+			e.auditSkip(entry.Path, "inode_role_conflict", &id)
+		} else {
+			e.auditSkip(entry.Path, "duplicate_inode_alias", &id)
+		}
+		return false
+	}
+	if e.inodePaths[oldKey] == entry.Path {
+		delete(e.inodePaths, oldKey)
+	}
+	e.inodePaths[newKey] = entry.Path
+	entry.ID = id
+	return true
 }
