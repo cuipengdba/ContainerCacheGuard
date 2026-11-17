@@ -2,6 +2,8 @@
 
 产品只使用 Go 标准库，没有 CGO、动态库和外部备份客户端依赖。支持 Linux amd64/arm64；Windows 可以交叉编译，但程序不在 Windows 上运行缓存治理。
 
+rc.18的可选`node-collect`子命令复用节点已有kubectl及认证；普通run文件后端无此依赖。`task-run`调用原环境的PG14/其他任务程序，不将它们打包进CCG；缓存治理程序本身仍为静态双架构二进制。
+
 ## 构建
 
 Go 1.24 或更高，当前构建和 CI 使用 1.27.3。Python 仅用于可选构建辅助脚本和验收，不是产品运行依赖。
@@ -29,6 +31,8 @@ rc.11取消页面及HTTP服务，不再使用Node网页回归。原生CLI检查�
 race 测试需要本机可用的 C 工具链；这不改变最终静态程序的依赖。Linux 文件机制测试需支持的真实磁盘文件系统；tmpfs 不作为支持目标。原CLI集成测试只在临时目录造文件，不修改cgroup限额、不全机清缓存。rc.17额外的`scripts/kernel_reclaim.py`必须在临时专用VM以root运行：新建自己的限额叶子cgroup与文件，执行真实memory.reclaim和重启去重，再清理本次资源；不修改既有业务cgroup或全机drop_caches，不可照搬到现有数据库容器。持续压力、真实数据、Kubernetes/OpenShift 验收另见测试报告。
 
 CI 在原生 x86_64 和 ARM64 runner 执行，不能以交叉编译成功代替原生执行；页大小随 runner 记录，4KiB 的 ARM64 结果不能证明64KiB内核已通过。
+
+rc.18另运行`scripts/rc18_cli.py`核对任务参数/信号/退出码、心跳故障与采集失败不续期；其中Kubelet输入明确为合成接口夹具。`scripts/same_container.py`仅适合专用CI VM：创建唯一临时PG14容器，在其中运行CCG、写入压力、备份和校验，再于独立目录启动恢复实例核对30000行，结束删除该测试容器。没有宿主业务数据挂载，不访问171/94。它不是1200模式真实负载或Kubernetes驱逐试验；不能在共享生产Docker宿主照搬。
 
 ## 容器镜像
 

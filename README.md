@@ -7,15 +7,17 @@
 
 **在 Linux 容器里直接运行的文件缓存治理常驻程序。** 适用于数据库备份、大文件扫描、数据同步等容易让文件页缓存持续增长的场景。一个静态二进制，不需要安装 PostgreSQL 客户端、Python、vmtouch 或 nocache，也不要求业务由它启动。
 
-**当前设计（2026-11-17）：数据库和备份继续在同一容器。** DBS、HISDBS各保留原容器，内部运行数据库、原备份工具和一个CCG，不再要求新增dbsbackup/hisdbsbackup服务。[同容器架构与接入](docs/SAME-CONTAINER.zh.md)。下一版[rc.18规划](docs/RC18-PLAN.zh.md)聚焦统一预算下的路径策略、备份阶段、真实节点/磁盘保护信号及日志开销；本次仅规划和文档同步，尚未编码或发布rc.18，也未改动服务器。
+**当前架构（2026-11-17）：数据库和备份继续在同一容器。** DBS、HISDBS各保留原容器，内部运行数据库、原备份工具和一个CCG；源与输出共用总预算。[同容器架构](docs/SAME-CONTAINER.zh.md)。rc.18已实现路径策略、任务包装与采集命令；本轮仅在隔离CI验证和发布，未连接/改动171或94。普通run无PG客户端/Python依赖，可选node-collect复用节点既有kubectl。
 
-**最新候选为[0.2.0-rc.17](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.17)：新增驱逐前单次memory.reclaim后端，默认关闭。** 每事件至多一次持久登记、节点串行、受限Unix Socket、阻塞辅助进程、真实保护与120秒复查。原生amd64/arm64各119项顶层race单测、45项CLI和真实内核隔离实验通过；1.125GiB缓存池请求256MiB，120秒末文件净下降约250MiB，执行器重启后没有重复调用。不是实际Kubernetes驱逐验收。[详细使用和全部参数](docs/RC17-USAGE.zh.md)、[实际结果与风险](docs/RC17-DELIVERY.zh.md)。
+**最新候选为[0.2.0-rc.18](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.18)：同容器统一预算下的路径角色、任务阶段保护和可选节点采集。** 原生amd64/arm64各通过134项顶层race单测、45项原CLI与5项新增CLI契约；单独PG14同容器备份校验及独立恢复30000行通过。文件夹具净下降≥1GiB并复查持续120秒，内核仍单次/重启去重。完整数字、IO与SQL/API代价见[实际交付](docs/RC18-DELIVERY.zh.md)，用法/参数见[rc.18手册](docs/RC18-USAGE.zh.md)。未完成真实DBS/无PSI生产资格或48小时驱逐验收。
+
+**历史候选[0.2.0-rc.17](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.17)：新增驱逐前单次memory.reclaim后端，默认关闭。** 每事件至多一次持久登记、节点串行、受限Unix Socket、阻塞辅助进程、真实保护与120秒复查。原生amd64/arm64各119项顶层race单测、45项CLI和真实内核隔离实验通过；1.125GiB缓存池请求256MiB，120秒末文件净下降约250MiB，执行器重启后没有重复调用。不是实际Kubernetes驱逐验收。[详细使用和全部参数](docs/RC17-USAGE.zh.md)、[实际结果与风险](docs/RC17-DELIVERY.zh.md)。
 
 **内核后端覆盖整个登记cgroup，文件目录/WAL排除不约束它。** 历史OOM、IO/业务恶化、信号缺失等仍会停止新操作；不保证释放指定字节或永不驱逐。11月12日94只读检查确认接口存在但无PSI，本轮未复查；同容器生产schema2采集、无PSI真实盘替代与两库等压/48小时仍待验收。可选节点agent只负责权限执行，不是备份容器。常态文件后端的路径/类型边界不能套用到内核后端。[原始设计及修订入口](docs/RC17-MEMORY-RECLAIM-DESIGN.zh.md)。
 
 上一候选[rc.16](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.16)的根目录/类型归因、执行位数据例外、候选复查与受保护压力加速均保留。[rc.16手册](docs/RC16-USAGE.zh.md)。
 
-**压力加速默认关闭，候选发布不等于现场验收。** 本次隔离执行期SQL/API采样p99与可见cgroup IO峰值上升，低影响尚未验收。1GiB试验是已知低复用文件，不是实际DBS/HISDBS业务重放；不能证明临界救援或不被驱逐。新OOM、脏页、IO/业务/节点等保护仍生效。原始现场覆盖不足原因待核实，rc.16轮未连接171/94；rc.17仅只读检查94。真实PG14匹配备份恢复与48小时仍未通过。rc.14/15已交付的信号加固与离线compare继续保留：[两版交付](docs/RC14-RC15-DELIVERY.zh.md)。
+**历史rc.16压力加速的验收边界。** 当时隔离执行期SQL/API采样p99与可见cgroup IO峰值上升，低影响尚未验收。1GiB试验是已知低复用文件，不是实际DBS/HISDBS业务重放；不能证明临界救援或不被驱逐。新OOM、脏页、IO/业务/节点等保护仍生效。原始现场覆盖不足原因待核实，rc.16轮未连接171/94；rc.17仅只读检查94。真实PG14匹配备份恢复与48小时仍未通过。rc.14/15已交付的信号加固与离线compare继续保留：[两版交付](docs/RC14-RC15-DELIVERY.zh.md)。
 
 此前候选版本为 [**0.2.0-rc.13**](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.13)。新增显式受限备份输出保护、来源绑定的实际kubelet内存驱逐信号、实例/运行/cgroup身份和多容器离线SVG图片；默认strict不降级，继续无Web、每日详细日志与30天/1GB清理。原生amd64/arm64各82项顶层race单测、37项CLI和3项采集器规范化通过，0跳过，6附件摘要与标签已核验。详见[版本说明](docs/RELEASE-v0.2.0-rc.13.zh.md)、[详细使用与参数](docs/RC13-USAGE.zh.md)、[本版验证和限制](docs/RC13-DELIVERY.zh.md)。
 
@@ -69,7 +71,7 @@ chmod +x containercacheguard-linux-amd64
 
 ## 日志和状态文件
 
-rc.11取消内置Web页面和全部HTTP服务，不再监听端口。每日JSON日志包含中文状态说明、内存分类、保护缺项、扫描/建议/驻留复查增量和错误；`status`读取当前状态文件。旧Web字段与开关仅用于兼容，启动时提示已停用。[日志说明](docs/LOGGING.zh.md)和[无Web监控接入](docs/MONITORING.zh.md)包含两个容器实例的持久采集方法；rc.18任务/角色统计仍为规划。
+rc.11取消内置Web页面和全部HTTP服务，不再监听端口。每日JSON日志包含中文状态说明、内存分类、保护缺项、扫描/建议/驻留复查增量和错误；`status`读取当前状态文件。旧Web字段与开关仅用于兼容，启动时提示已停用。[日志说明](docs/LOGGING.zh.md)和[无Web监控接入](docs/MONITORING.zh.md)包含两个容器实例的持久采集方法；rc.18已增加路径角色和任务状态，详见本版使用手册。
 
 ## 为什么不只是定时运行 vmtouch
 
@@ -97,14 +99,14 @@ DBS、HISDBS各运行一个CCG，数据库、备份、校验/同步与CCG共享�
 
 ## 完整文档
 
-当前已发布rc.17；下一版为[rc.18同容器治理规划](docs/RC18-PLAN.zh.md)，未开始编码。rc.17接口见[使用手册](docs/RC17-USAGE.zh.md)，原始设计保留版本背景，部署架构以[同容器说明](docs/SAME-CONTAINER.zh.md)为准。
+当前已发布rc.18；[完整使用手册](docs/RC18-USAGE.zh.md)包含新增参数、同容器模板、任务包装、节点采集和回退。[交付结果](docs/RC18-DELIVERY.zh.md)明确通过和未验收范围；[原始规划](docs/RC18-PLAN.zh.md)保留C039背景，不能用规划数字代替实测。
 
 - [命令与全部配置参数](docs/CONFIGURATION.zh.md)：每个参数的单位、默认值和调整影响。
 - [每日日志与自动清理](docs/LOGGING.zh.md)：一天一个文件、30天和1GB边界、两个实例目录及权限。
 - [常见状态与排障](docs/TROUBLESHOOTING.zh.md)：为什么不释放、释放后不下降、跨容器监控错位，以及怎样确认暂停。
 - [容器、DBS、Kubernetes 与 OpenShift 部署](docs/DEPLOYMENT.zh.md)：当前同容器方案、UID、cgroup与旧清理协调，sidecar仅作历史替代方案。
 - [DBS/HISDBS 同容器设计](docs/SAME-CONTAINER.zh.md)：数据库、备份、CCG的目录、统一计费、可选agent与过渡步骤。
-- [下一版rc.18计划](docs/RC18-PLAN.zh.md)：路径角色、备份感知、保护信号、日志优化、开发任务与验收门槛。
+- [rc.18原始规划与验收门槛](docs/RC18-PLAN.zh.md)：路径角色、备份感知、保护信号、日志优化、开发任务与验收门槛。
 - [历史四容器说明](docs/FOUR-CONTAINERS.zh.md)：旧独立备份方案与按日期记录，已被当前同容器设计取代。
 - [设计原理与参考项目](docs/DESIGN.zh.md)：回收通路、预算、状态机和支持边界。
 - [问题分析与长期治理](docs/OPERATIONS.zh.md)：怎样向团队解释问题、与旧工具的区别、短中长期措施和验收方法。

@@ -88,3 +88,8 @@ rc.11已取消Prometheus及全部HTTP服务；清理数量和截断次数通过�
 默认每10秒记录完整状态；检测到决策变化时尽早记录，但状态记录最多每秒一条。更短的瞬态可能合并，启动/停止/清理事件单独记录。详情来源都是已有采样和计数，不额外扫描目录、读取文件内容或逐文件打印日志。保留更多信息仍会增加日志体积，要按实际日志量评估1GB预算；容量优先于保满30天。
 
 启动记录含版本、源码提交、架构、PID、范围、关键预算和明确的`web_service_enabled:false`。旧Web参数存在时只记录一次`deprecated_web_settings_ignored`及字段名，不输出旧监听值或令牌路径，不打开令牌文件。旧参数不能重新开启Web。
+
+
+## rc.18的周期快照引用
+
+周期日志默认省略kernel_reclaim.before/observations的重复大对象，保留episode、结果和kernel_detail快照数量/位置。完整状态、持久journal及agent关键事件仍保留原始快照；log_kernel_snapshots=true可恢复周期全量。path_roles/tasks和coverage_audit中的path_role解释目录权限与阶段；顶层protection仍反映默认strict保护，不等于每条实验输出路径的资格，离线compare不会因此伪造生产保护通过。具体参数见[rc.18手册](RC18-USAGE.zh.md)。
