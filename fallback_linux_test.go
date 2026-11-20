@@ -114,7 +114,8 @@ func TestFallbackProtectsObservedWriterAndReportOnly(t *testing.T) {
 	if !e.fallbackFileSafe(p, id, file, now, true) {
 		t.Fatal("quiet candidate was not accepted")
 	}
-	f.input.Store(&fallbackInput{metrics: Metrics{Time: now}, policy: Decision{Allow: true}, permission: pathPermissions{Time: now}})
+	f.input.Store(&fallbackInput{metrics: Metrics{Time: now}, policy: Decision{Allow: true},
+		permission: pathPermissions{Time: now, Tasks: TaskStatus{State: "disabled"}}})
 	f.current.At, f.current.Reason, f.nextRound = now, "file_cache_above_target", now.Add(time.Minute)
 	r := &region{Path: p, Length: 65536, Fallback: fallbackAuto}
 	if e.fallbackAllows(r, now) {

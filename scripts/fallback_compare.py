@@ -9,7 +9,7 @@ import mmap
 import os
 from pathlib import Path
 import platform
-import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -199,6 +199,7 @@ def trial(name, binary, vmtouch, base, result):
         if name == "fallback":
             cfg["cache_fallback"] = dict(enabled=True, pgdata=str(pgdata), backup_directories=[str(backup)],
                                          auto_directories=[str(scratch)], auto_action="enforce", interval_seconds=30,
+                                         parent_headroom_bytes=550 * MiB,
                                          round_entries_per_scope=8192, round_work_ms_per_scope=1500,
                                          round_advice_bytes_per_scope=1280 * MiB, expected_memory_high_bytes=2560 * MiB)
         config = area / "config.json"
@@ -231,6 +232,7 @@ def trial(name, binary, vmtouch, base, result):
         sql_backup = backup / "concurrent-pg"
         max_caps = {"fixed": 0, "auto": 0}
         available_at_drop = None
+        reads_at_close = None
         report_rounds = []
         last_round = 0
         while (elapsed := time.monotonic() - start) < 67:
@@ -238,11 +240,8 @@ def trial(name, binary, vmtouch, base, result):
             if elapsed >= 19 and pressure is None:
                 pressure = spawn("pressure", sibling, 900, area / "pressure-ready")
             if elapsed >= 27 and backup_job is None:
-                backup_job = subprocess.Popen(["pg_basebackup", "-D", str(sql_backup), "-X", "stream", "--max-rate=2M"],
-                                              stdout=log, stderr=log, preexec_fn=None)
-                # Keep the process in the target cgroup before it reads its first block.
-                (leaf / "cgroup.procs").write_text(str(backup_job.pid))
-                children.append(backup_job)
+                backup_job = spawn("exec", leaf, shutil.which("pg_basebackup"), "-D", sql_backup, "-X", "stream",
+                                   "--checkpoint=fast", "--max-rate=2M")
             if elapsed >= 30 and name == "legacy" and legacy is None:
                 legacy_at = elapsed
                 legacy = spawn("exec", leaf, vmtouch, "-e", pgdata, backup, scratch)
@@ -259,6 +258,7 @@ def trial(name, binary, vmtouch, base, result):
             if ready.exists() and filler.poll() == 0 and fixed_fill.poll() == 0 and awaiting_fill:
                 result["closed_initial_bytes"] = cold
                 result["producer_exit_second"] = round(elapsed, 2)
+                reads_at_close = io_values(leaf / "io.stat")["rbytes"]
                 awaiting_fill = False
             for row in backstop.get("recent_findings") or []:
                 if row["path"] == str(closed):
@@ -275,7 +275,8 @@ def trial(name, binary, vmtouch, base, result):
                 first_advice = elapsed
             if not awaiting_fill and first_drop is None and cold <= result["closed_initial_bytes"] - GiB:
                 first_drop, available_at_drop = elapsed, remaining
-            snapshots.append(dict(t=round(elapsed, 2), resident=cold, fixed=resident(fixed), file=memory["file"]-memory["shmem"],
+            snapshots.append(dict(t=round(elapsed, 2), resident=cold, fixed=resident(fixed), hot=resident(hot),
+                                  file=memory["file"]-memory["shmem"], file_refaults=memory.get("workingset_refault_file"),
                                   parent_remaining=remaining, cgroup_read=io_values(leaf / "io.stat")["rbytes"],
                                   advice_auto=advised, permission=backstop.get("permission"),
                                   daemon_cpu_percent=status.get("metrics", {}).get("self_cpu_percent", 0),
@@ -302,6 +303,9 @@ def trial(name, binary, vmtouch, base, result):
                       final_net_decrease=result["closed_initial_bytes"]-snapshots[-1]["resident"],
                       backup_manifest_verified=True, backup_wal_parsing_in_this_trial=False,
                       vmtouch_started_at=legacy_at, io_bytes_and_ops={k: output_io[k]-io_before[k] for k in output_io},
+                      read_bytes_after_producer_exit=output_io["rbytes"]-reads_at_close,
+                      ccg_peak_sampled_cpu_percent=max(s["daemon_cpu_percent"] for s in snapshots),
+                      ccg_peak_sampled_rss_bytes=max(s["daemon_rss_bytes"] for s in snapshots),
                       oom_before=oom_before, oom_after=oom_after, parent_memory_events=parent_events)
         assert len(result["errors"]) == 0 and result["samples"] > 100
         assert oom_after["oom_kill"] == oom_before["oom_kill"] and parent_events["oom_kill"] == 0

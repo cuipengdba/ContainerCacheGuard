@@ -582,6 +582,9 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			return
 		}
 	}
+	if r.Fallback != 0 && !e.fallbackFileSafe(r.Path, check, f, time.Now(), true) {
+		return
+	}
 	if !e.regionAllowed(r, allow, time.Now()) {
 		return
 	}
@@ -682,6 +685,9 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		hintRate = float64(e.c.DiscoverEntriesPerSecond) * 0.25
 	}
 	ordinaryRate := float64(e.c.DiscoverEntriesPerSecond) - hintRate
+	if e.fallback != nil {
+		ordinaryRate -= float64(e.c.DiscoverEntriesPerSecond) * .40
+	}
 	e.discovery.refill(now, ordinaryRate, math.Max(1, ordinaryRate))
 	e.hintDiscovery.refill(now, hintRate, math.Max(1, hintRate))
 	boostActive := allow.Load() && e.boost != nil && e.boost.Load()

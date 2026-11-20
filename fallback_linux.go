@@ -82,25 +82,27 @@ type fallbackFile struct {
 	offset       int64
 	protected    time.Time
 	writerEpoch  uint64
+	sources      uint8
 }
 type fallbackDir struct {
 	file *os.File
 	path string
 }
 type fallbackScope struct {
-	roots         []fallbackRoot
-	walkRoot      int
-	dirs          []fallbackDir
-	walkAgain     time.Time
-	byInode       map[[2]uint64]*fallbackFile
-	files         []*fallbackFile
-	cursor, evict int
-	fast          []*fallbackFile
-	fastCursor    int
-	fastEvict     int
-	visits        uint64
-	pending       int
-	stats         FallbackScopeStatus
+	roots          []fallbackRoot
+	walkRoot       int
+	dirs           []fallbackDir
+	walkAgain      time.Time
+	byInode        map[[2]uint64]*fallbackFile
+	files          []*fallbackFile
+	cursor, evict  int
+	fast           []*fallbackFile
+	fastCursor     int
+	fastEvict      int
+	visits         uint64
+	ops, discovery budget
+	pending        int
+	stats          FallbackScopeStatus
 }
 type fallbackEngine struct {
 	c             FallbackConfig
@@ -115,6 +117,7 @@ type fallbackEngine struct {
 	stalledRounds int
 	priority      int
 	proc          fallbackProc
+	procOps       budget
 }
 
 func (e *engine) initFallback() error {
@@ -217,9 +220,6 @@ func (e *engine) fallbackRecord(path, source string, file *os.File, id identity,
 	}
 	key := [2]uint64{id.Dev, id.Ino}
 	old := l.byInode[key]
-	if old == nil || (!sameFile(old.id, id) && old.path == path) {
-		f.finding(i, path, source, id.Size, now)
-	}
 	if root == nil {
 		l.stats.Skipped["outside_allowed_roots"]++
 		return
@@ -233,6 +233,16 @@ func (e *engine) fallbackRecord(path, source string, file *os.File, id identity,
 	if old != nil && old.path != path {
 		l.stats.Skipped["duplicate_inode"]++
 		return
+	}
+	var sourceBit uint8 = 1
+	switch source {
+	case "access_hint":
+		sourceBit = 2
+	case "cgroup_open_fd":
+		sourceBit = 4
+	}
+	if old == nil || old.sources&sourceBit == 0 {
+		f.finding(i, path, source, id.Size, now)
 	}
 	if old == nil {
 		old = &fallbackFile{path: path, source: source, id: id}
@@ -253,6 +263,10 @@ func (e *engine) fallbackRecord(path, source string, file *os.File, id identity,
 		l.byInode[key] = old
 	} else if !sameFile(old.id, id) {
 		old.id, old.offset = id, 0
+	}
+	old.sources |= sourceBit
+	if sourceBit == 4 || (sourceBit == 2 && old.sources&4 == 0) {
+		old.source = source
 	}
 	if active {
 		quiet := e.c.roleConfig(e.c.pathPolicy(path)).ProtectSeconds
@@ -393,7 +407,7 @@ func (e *engine) fallbackWork(ctx context.Context, now, deadline time.Time, allo
 		mainScan := e.stats.ScannedBytes - e.stats.FallbackScannedBytes
 		mainReduction := e.stats.MainRecheckedNetBytes
 		f.current.Reason = input.reason
-		if !f.current.At.IsZero() && f.current.Round > 1 && mainScan-f.lastScan >= e.c.RegionBytes &&
+		if f.current.Round > 1 && mainScan-f.lastScan >= e.c.RegionBytes &&
 			f.c.MinMainReductionBytes > 0 && mainReduction-f.lastReduction < f.c.MinMainReductionBytes {
 			f.stalledRounds = minInt(2, f.stalledRounds+1)
 		} else {
@@ -412,7 +426,9 @@ func (e *engine) fallbackWork(ctx context.Context, now, deadline time.Time, allo
 	// walk or advice round has spent its quota.
 	procUntil := now.Add(deadline.Sub(now) / 3)
 	procStart := time.Now()
-	for time.Now().Before(procUntil) && !now.Before(f.proc.next) && e.ops.take(1) {
+	procRate := float64(e.c.MaxOperationsPerSecond) * .10
+	f.procOps.refill(now, procRate, maxFloat(1, procRate))
+	for time.Now().Before(procUntil) && !now.Before(f.proc.next) && f.procOps.take(1) && e.ops.take(1) {
 		f.proc.step(e, input.metrics, now)
 	}
 	f.current.ProcWorkUS += time.Since(procStart).Microseconds()
@@ -420,21 +436,37 @@ func (e *engine) fallbackWork(ctx context.Context, now, deadline time.Time, allo
 	for j := range 2 {
 		i := 1 + (f.priority+j)%2
 		l := &f.lanes[i]
+		opsRate := float64(e.c.MaxOperationsPerSecond) * .20
+		walkRate := float64(e.c.DiscoverEntriesPerSecond) * .20
+		l.ops.refill(now, opsRate, maxFloat(1, opsRate))
+		l.discovery.refill(now, walkRate, maxFloat(1, walkRate))
 		start := time.Now()
 		until := deadline
 		if j == 0 {
 			until = start.Add(deadline.Sub(start) / 2)
 		}
-		for ctx.Err() == nil && time.Now().Before(until) && l.stats.Entries < f.c.RoundEntriesPerScope &&
+		canWalk := len(l.roots) > 0 && !now.Before(l.walkAgain)
+		canScan := f.current.Reason != "" && input.policy.Allow &&
+			(i == fallbackFixed || f.c.AutoAction == "enforce") && (len(l.fast) != 0 || len(l.files) != 0) &&
+			l.stats.RoundRequested < f.c.RoundAdviceBytesPerScope
+		if !canWalk && !canScan {
+			continue
+		}
+		// Spread quota across the round so active files and large trees do not
+		// exhaust it before a file closes and the protection period expires.
+		pace := minInt(f.c.RoundEntriesPerScope, 32+int(now.Sub(f.current.At).Seconds()*float64(f.c.RoundEntriesPerScope)/float64(f.c.IntervalSeconds)))
+		for ctx.Err() == nil && time.Now().Before(until) && l.stats.Entries < pace &&
 			l.stats.RoundWorkUS+time.Since(start).Microseconds() < int64(f.c.RoundWorkMSPerScope)*1000 {
-			if !e.ops.take(1) {
+			if !l.ops.take(1) || !e.ops.take(1) {
 				break
 			}
 			l.stats.Entries++
-			if l.stats.Entries%2 != 0 || f.current.Reason == "" || !input.policy.Allow || (i == fallbackAuto && f.c.AutoAction != "enforce") {
+			if canWalk && (l.stats.Entries%2 != 0 || !canScan) && l.discovery.take(1) {
 				e.fallbackWalk(l, now)
-			} else {
+			} else if canScan {
 				e.fallbackScan(l, i, now, allow)
+			} else {
+				break
 			}
 		}
 		l.stats.RoundWorkUS += time.Since(start).Microseconds()
@@ -588,6 +620,9 @@ func (e *engine) fallbackAllows(r *region, now time.Time) bool {
 }
 
 func (e *engine) regionAllowed(r *region, allow *atomic.Bool, now time.Time) bool {
+	if e.fallback != nil && e.fallbackExcluded(r.Path) {
+		return false
+	}
 	if r.Fallback != 0 {
 		return e.fallbackAllows(r, now)
 	}
