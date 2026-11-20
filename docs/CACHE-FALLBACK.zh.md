@@ -2,6 +2,8 @@
 
 DBS、HISDBS 各自保留 PG14、原备份工具和一个 CCG。保底是 CCG 原文件回收执行器中的一条有界处理路径。常规回收、固定目录保底和自动发现共用同一个工作线程、驻留检查、扫描字节、建议速率、CPU/RSS 保护和区域复查。
 
+[x86 与 ARM64 三组开发对照](CACHE-FALLBACK-RESULTS.zh.md)记录了文件实际净下降、父级余量、SQL/API 和备份校验。
+
 Linux 的 `vmtouch -e` 核心行为是向内核发出 `POSIX_FADV_DONTNEED`。CCG 用 Go 实现这段操作并静态编进 x86/ARM64 二进制。完整的上游 vmtouch CLI 用于隔离对照，CCG 运行时无需安装它。 [vmtouch v1.3.1 源码](https://github.com/hoytech/vmtouch/blob/b8b30e81d51544d6b8f428552f10d5b398a77fcb/vmtouch.c#L531)
 
 ## 配置与接入
@@ -38,7 +40,7 @@ Linux 的 `vmtouch -e` 核心行为是向内核发出 `POSIX_FADV_DONTNEED`。CC
 
 ## 看结果
 
-状态文件及周期日志读取 `counters.cache_fallback`。顶层有轮次、触发原因、当前许可、父级余量、已配置的 kubelet 信号、FD 采样覆盖和 `memory.high`。诊断包含最近 16 条路径及来源、发现时间及距 CCG 启动的毫秒数。未指定可信 kubelet 信号时，余量字段为空。
+状态文件及周期日志读取 `counters.cache_fallback`。顶层有轮次、触发原因、最近工作切片见到的许可原因、父级余量、已配置的 kubelet 信号、FD 采样覆盖和 `memory.high`。工作线程因保护停顿时，同时检查实时的顶层 `decision`、`protection` 和信号有效期。诊断包含最近 16 条路径及来源、发现时间及距 CCG 启动的毫秒数。未指定可信 kubelet 信号时，余量字段为空。
 
 分别看 `fixed` 和 `auto` 中的 `discoveries_total`、`skipped_total`、`round_entries`、`round_work_us`、`round_requested_bytes`、`initial_queried_bytes_total`、`advice_bytes_total`、`immediate_decrease_bytes_total`、`delayed_net_bytes_total`、`reappeared_bytes_total`。延迟净下降按首次复查及后续差量累计。它是按区域观测的结果，可能包含自然回收。用候选 ID 和跟踪窗口复核持续性，不能把多轮建议或全部复查简单相加成独立净收益。
 
