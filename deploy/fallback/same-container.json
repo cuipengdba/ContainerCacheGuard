@@ -1,0 +1,31 @@
+{
+  "mode": "paths",
+  "action": "observe",
+  "instance_id": "hisdbs",
+  "paths": ["/data/pgdata", "/data/backup"],
+  "state_file": "/opt/ccg/state/status.json",
+  "log_directory": "/opt/ccg/log",
+  "critical_mode": "pause",
+  "cache_target_bytes": 2147483648,
+  "extended_recheck_seconds": [30, 120],
+  "path_policies": [
+    {"path": "/data/pgdata", "role": "database-source"},
+    {"path": "/data/backup", "role": "backup-output", "low_reuse": true}
+  ],
+  "cache_fallback": {
+    "enabled": true,
+    "interval_seconds": 30,
+    "pgdata": "/data/pgdata",
+    "backup_directories": ["/data/backup"],
+    "auto_directories": ["/data/sync-tmp", "/data/archive-output"],
+    "auto_action": "report",
+    "allow_bounded_critical": false,
+    "parent_headroom_bytes": 2147483648,
+    "node_headroom_bytes": 1073741824,
+    "min_main_reduction_bytes": 33554432,
+    "round_work_ms_per_scope": 150,
+    "round_entries_per_scope": 1024,
+    "round_advice_bytes_per_scope": 134217728,
+    "proc_entries_per_pass": 512
+  }
+}
