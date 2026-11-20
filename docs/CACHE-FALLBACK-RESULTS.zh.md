@@ -40,3 +40,14 @@
 此前 CI 44681358744 首轮完整备份成功，但 x86 和 ARM64 的固定窗口回收分别到 1004 MiB 和 1008 MiB，未过本夹具 1 GiB 门槛。结果保留。最终轮保存独立原始时间序列，使用只读无 atime 的驻留测量，并调整测试压力和查询预算。最初备份用例因临时 PostgreSQL 服务的 pg_hba 未允许容器桥接地址的复制连接失败，修复限定在临时测试服务。
 
 [配置、用法和诊断字段](CACHE-FALLBACK.zh.md)。两架构的原始样本由运行页面中的 `fallback-dev-amd64` 和 `fallback-dev-arm64` 附件提供。
+
+## v0.2.0-rc.19 发布复验
+
+发布源码 `ef8a1541dd5c4d8ec23ada438195f775bb67c8b3`。两架构各通过 138 项 race 顶层单测、45 项 CLI 和 5 项任务契约。原生回归与保底对照使用的对应架构二进制逐字节一致。 [全量回归](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/44686013601) · [保底三组对照](https://github.com/cuipengdba/ContainerCacheGuard/actions/runs/44686013734)
+
+| 架构 | 保底最终净下降 MiB | 达到 1 GiB 的时刻 s | 随后观察 s | SQL P99 原 CCG→保底 ms |
+| --- | ---: | ---: | ---: | --- |
+| amd64 | 1152 | 37.95 | 50.02 | 36.35→44.42 |
+| arm64 | 1152 | 37.65 | 50.31 | 43.97→49.05 |
+
+本轮保底组关闭后 cgroup 读 IO 为 0 MiB。PG14 同容器回归完成备份、校验和独立恢复 30000 行。SQL P99 在两架构上均有所上升，真实 kubelet 驱逐、生产低影响和长稳仍待验收。 [候选版与机器可读证据](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.19)
