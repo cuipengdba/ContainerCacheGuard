@@ -180,6 +180,8 @@ def trial(name, binary, vmtouch, base, result):
     parent.mkdir()
     leaf, sibling = parent / "target", parent / "sibling"
     log = (area / "console.log").open("w")
+    backup_log_path = area / "backup.log"
+    backup_log = backup_log_path.open("w")
     probe = None
     try:
         (parent / "cgroup.subtree_control").write_text("+memory +io")
@@ -207,8 +209,8 @@ def trial(name, binary, vmtouch, base, result):
         oom_before = data_values(leaf / "memory.events")
         io_before = io_values(leaf / "io.stat")
 
-        def spawn(*arguments):
-            proc = subprocess.Popen([sys.executable, __file__, *map(str, arguments)], stdout=log, stderr=log)
+        def spawn(*arguments, output=log):
+            proc = subprocess.Popen([sys.executable, __file__, *map(str, arguments)], stdout=output, stderr=output)
             children.append(proc)
             return proc
 
@@ -241,7 +243,10 @@ def trial(name, binary, vmtouch, base, result):
                 pressure = spawn("pressure", sibling, 900, area / "pressure-ready")
             if elapsed >= 27 and backup_job is None:
                 backup_job = spawn("exec", leaf, shutil.which("pg_basebackup"), "-D", sql_backup, "-X", "stream",
-                                   "--checkpoint=fast", "--max-rate=2M")
+                                   "--checkpoint=fast", "--max-rate=2M", "-d",
+                                   "host=127.0.0.1 port=5432 user=postgres dbname=postgres", output=backup_log)
+            if backup_job is not None and backup_job.poll() not in (None, 0):
+                raise RuntimeError(f"pg_basebackup exited {backup_job.returncode}: {backup_log_path.read_text()}")
             if elapsed >= 30 and name == "legacy" and legacy is None:
                 legacy_at = elapsed
                 legacy = spawn("exec", leaf, vmtouch, "-e", pgdata, backup, scratch)
@@ -284,7 +289,7 @@ def trial(name, binary, vmtouch, base, result):
             result["last_backstop"] = backstop
             time.sleep(.45)
         assert not awaiting_fill and result["closed_initial_bytes"] >= GiB
-        assert backup_job is not None and backup_job.wait(25) == 0, (area / "console.log").read_text()[-4000:]
+        assert backup_job is not None and backup_job.wait(25) == 0, backup_log_path.read_text()
         verify = sorted(Path("/usr/lib/postgresql").glob("*/bin/pg_verifybackup"))[-1]
         command(verify, "--no-parse-wal", sql_backup, timeout=30)
         if legacy:
@@ -323,6 +328,7 @@ def trial(name, binary, vmtouch, base, result):
             probe.finish()
         stop_children(children)
         log.close()
+        backup_log.close()
         for cg in (leaf, sibling, parent):
             if cg.exists():
                 cg.rmdir()
@@ -336,6 +342,7 @@ def main():
     args = parser.parse_args()
     assert os.geteuid() == 0
     assert command("psql", "-XAt", "-c", "SHOW server_version").startswith("14.")
+    print(command("pg_basebackup", "--version").strip(), flush=True)
     command("psql", "-XAt", "-c", "CREATE TABLE fallback_probe(id int PRIMARY KEY, n bigint); INSERT INTO fallback_probe VALUES(1,0)")
     report = dict(success=False, kernel=platform.release(), architecture=platform.machine(), trials={},
                   kubelet_pod_available_bytes=None, eviction_acceptance=False,
