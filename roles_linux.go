@@ -123,7 +123,9 @@ func (e *engine) roleAllows(path string, now time.Time) bool {
 	if e.roles == nil {
 		return true
 	}
-	s := e.roles.snapshot.Load()
+	return e.pathAllowed(path, now, e.roles.snapshot.Load())
+}
+func (e *engine) pathAllowed(path string, now time.Time, s *pathPermissions) bool {
 	if s == nil || now.Sub(s.Time) > time.Duration(e.c.IntervalMS*3)*time.Millisecond || now.Before(s.Time.Add(-time.Second)) {
 		return false
 	}
@@ -136,6 +138,12 @@ func (e *engine) roleAllows(path string, now time.Time) bool {
 		}
 	}
 	p := e.c.pathPolicy(path)
+	if p.Role == "excluded" {
+		return false
+	}
+	if len(s.Roles) == 0 {
+		return true
+	}
 	if p.Role == "default" {
 		return s.DefaultAllow()
 	}

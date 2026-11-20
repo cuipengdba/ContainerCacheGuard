@@ -27,6 +27,7 @@ type pendingHint struct {
 	expires time.Time
 }
 type accessHints struct {
+	trackWrites          bool
 	fd                   int
 	watches              map[int]dirEntry
 	paths                map[string]int
@@ -64,7 +65,11 @@ func (h *accessHints) watch(path string, dev uint64, limit int) {
 		h.overflows++
 		return
 	}
-	wd, e := syscall.InotifyAddWatch(h.fd, path, syscall.IN_ACCESS|syscall.IN_CLOSE_WRITE|syscall.IN_CREATE|syscall.IN_MOVED_TO|syscall.IN_ONLYDIR|syscall.IN_DONT_FOLLOW)
+	mask := uint32(syscall.IN_ACCESS | syscall.IN_CLOSE_WRITE | syscall.IN_CREATE | syscall.IN_MOVED_TO | syscall.IN_ONLYDIR | syscall.IN_DONT_FOLLOW)
+	if h.trackWrites {
+		mask |= syscall.IN_MODIFY
+	}
+	wd, e := syscall.InotifyAddWatch(h.fd, path, mask)
 	if e != nil {
 		h.overflows++
 		return
@@ -117,17 +122,24 @@ func (h *accessHints) poll(e *engine, now, deadline time.Time) {
 		if e.c.excluded(path) {
 			continue
 		}
+		mainRoot := e.fallback == nil
+		for _, root := range e.roots {
+			mainRoot = mainRoot || beneath(path, root)
+		}
 		if mask&syscall.IN_ISDIR != 0 {
 			// Backups create a fresh output directory after the daemon starts.
 			// Watch it immediately; otherwise a large older backup can delay
 			// discovery of every new file until the ordinary sweep reaches it.
-			if mask&(syscall.IN_CREATE|syscall.IN_MOVED_TO) != 0 {
+			if mainRoot && mask&(syscall.IN_CREATE|syscall.IN_MOVED_TO) != 0 {
 				h.discoverOrDefer(e, path, dir.Dev, true, now)
 			}
 			continue
 		}
 		h.events++
-		h.discoverOrDefer(e, path, dir.Dev, false, now)
+		e.fallbackHint(path, "access_hint", now)
+		if mainRoot {
+			h.discoverOrDefer(e, path, dir.Dev, false, now)
+		}
 	}
 }
 

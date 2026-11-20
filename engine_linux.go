@@ -15,47 +15,51 @@ import (
 )
 
 type Counters struct {
-	Audit                 AuditSnapshot `json:"coverage_audit"`
-	PressureBoostActive   bool          `json:"pressure_boost_active"`
-	DetectedRoots         []string      `json:"detected_roots"`
-	Files                 int           `json:"indexed_files"`
-	Directories           int           `json:"pending_directories"`
-	Regions               int           `json:"tracked_regions"`
-	Discovered            uint64        `json:"discovered_entries"`
-	Overflow              uint64        `json:"inventory_overflow"`
-	IndexRotations        uint64        `json:"index_rotations"`
-	Errors                uint64        `json:"errors"`
-	LastError             string        `json:"last_error,omitempty"`
-	ScannedBytes          int64         `json:"sampled_region_bytes"`
-	ObservedResidentBytes int64         `json:"sampled_resident_bytes_cumulative"`
-	AdviceBytes           int64         `json:"advice_bytes"`
-	NetReductionBytes     int64         `json:"observed_net_reduction_bytes"`
-	ReappearedBytes       int64         `json:"observed_reappeared_bytes"`
-	Protected             uint64        `json:"protected_regions"`
-	Ineffective           uint64        `json:"ineffective_advice"`
-	DeferredRetries       uint64        `json:"deferred_retries"`
-	Sweeps                uint64        `json:"inventory_sweeps"`
-	CompletedSweeps       uint64        `json:"completed_inventory_sweeps"`
-	FastDiscoveryFallback bool          `json:"fast_discovery_fallback"`
-	Rate                  int64         `json:"current_advice_rate_bytes_per_second"`
-	HintEvents            uint64        `json:"hint_events"`
-	HintOverflows         uint64        `json:"hint_overflows"`
-	Watches               int           `json:"directory_watches"`
-	HintFiles             int           `json:"hint_files"`
-	HintsAvailable        bool          `json:"access_hints_available"`
-	PendingHints          int           `json:"pending_hint_paths"`
-	HintRetries           uint64        `json:"hint_discovery_retries"`
-	HintDropped           uint64        `json:"hint_queue_dropped"`
-	FileScheduleVisits    uint64        `json:"file_schedule_visits"`
-	WaitingRescanVisits   uint64        `json:"waiting_rescan_visits"`
-	RecentWriteDeferrals  uint64        `json:"recent_write_deferrals"`
-	ChangedCandidates     uint64        `json:"changed_candidates"`
-	NonresidentCandidates uint64        `json:"nonresident_candidates"`
-	NoProgressBackoffs    uint64        `json:"no_progress_backoffs"`
-	SweepInProgress       bool          `json:"inventory_sweep_in_progress"`
-	SweepAgeSeconds       float64       `json:"inventory_sweep_age_seconds"`
-	LastSweepSeconds      float64       `json:"last_inventory_sweep_seconds"`
-	FileScanWaitSeconds   float64       `json:"file_scan_wait_seconds"`
+	Fallback               *FallbackStatus `json:"cache_fallback,omitempty"`
+	FallbackScannedBytes   int64           `json:"fallback_queried_bytes_total,omitempty"`
+	FallbackImmediateBytes int64           `json:"fallback_immediate_decrease_bytes_total,omitempty"`
+	MainRecheckedNetBytes  int64           `json:"main_rechecked_net_bytes_total,omitempty"`
+	Audit                  AuditSnapshot   `json:"coverage_audit"`
+	PressureBoostActive    bool            `json:"pressure_boost_active"`
+	DetectedRoots          []string        `json:"detected_roots"`
+	Files                  int             `json:"indexed_files"`
+	Directories            int             `json:"pending_directories"`
+	Regions                int             `json:"tracked_regions"`
+	Discovered             uint64          `json:"discovered_entries"`
+	Overflow               uint64          `json:"inventory_overflow"`
+	IndexRotations         uint64          `json:"index_rotations"`
+	Errors                 uint64          `json:"errors"`
+	LastError              string          `json:"last_error,omitempty"`
+	ScannedBytes           int64           `json:"sampled_region_bytes"`
+	ObservedResidentBytes  int64           `json:"sampled_resident_bytes_cumulative"`
+	AdviceBytes            int64           `json:"advice_bytes"`
+	NetReductionBytes      int64           `json:"observed_net_reduction_bytes"`
+	ReappearedBytes        int64           `json:"observed_reappeared_bytes"`
+	Protected              uint64          `json:"protected_regions"`
+	Ineffective            uint64          `json:"ineffective_advice"`
+	DeferredRetries        uint64          `json:"deferred_retries"`
+	Sweeps                 uint64          `json:"inventory_sweeps"`
+	CompletedSweeps        uint64          `json:"completed_inventory_sweeps"`
+	FastDiscoveryFallback  bool            `json:"fast_discovery_fallback"`
+	Rate                   int64           `json:"current_advice_rate_bytes_per_second"`
+	HintEvents             uint64          `json:"hint_events"`
+	HintOverflows          uint64          `json:"hint_overflows"`
+	Watches                int             `json:"directory_watches"`
+	HintFiles              int             `json:"hint_files"`
+	HintsAvailable         bool            `json:"access_hints_available"`
+	PendingHints           int             `json:"pending_hint_paths"`
+	HintRetries            uint64          `json:"hint_discovery_retries"`
+	HintDropped            uint64          `json:"hint_queue_dropped"`
+	FileScheduleVisits     uint64          `json:"file_schedule_visits"`
+	WaitingRescanVisits    uint64          `json:"waiting_rescan_visits"`
+	RecentWriteDeferrals   uint64          `json:"recent_write_deferrals"`
+	ChangedCandidates      uint64          `json:"changed_candidates"`
+	NonresidentCandidates  uint64          `json:"nonresident_candidates"`
+	NoProgressBackoffs     uint64          `json:"no_progress_backoffs"`
+	SweepInProgress        bool            `json:"inventory_sweep_in_progress"`
+	SweepAgeSeconds        float64         `json:"inventory_sweep_age_seconds"`
+	LastSweepSeconds       float64         `json:"last_inventory_sweep_seconds"`
+	FileScanWaitSeconds    float64         `json:"file_scan_wait_seconds"`
 }
 type fileEntry struct {
 	Path     string
@@ -72,6 +76,8 @@ type regionKey struct {
 	Offset   int64
 }
 type region struct {
+	Fallback              int
+	DiscoverySource       string
 	CandidateID           uint64
 	AdvisedAt             time.Time
 	RecheckStage          int
@@ -114,6 +120,7 @@ func (b *budget) take(n float64) bool {
 }
 
 type engine struct {
+	fallback                              *fallbackEngine
 	roles                                 *roleControl
 	roleVisits                            uint64
 	roleCursor                            int
@@ -162,6 +169,9 @@ func newEngine(c Config, roots []string) *engine {
 	return e
 }
 func (e *engine) close() {
+	if e.fallback != nil {
+		e.fallback.close()
+	}
 	if e.hints != nil {
 		e.hints.close()
 	}
@@ -366,35 +376,53 @@ func (e *engine) discover(now time.Time, deadline time.Time) {
 	}
 }
 func (e *engine) track(f *fileEntry, offset, length, res int64, now time.Time) {
+	e.trackRegion(f, offset, length, res, now, 0, "")
+}
+func (e *engine) trackRegion(f *fileEntry, offset, length, res int64, now time.Time, lane int, source string) *region {
 	if res == 0 {
-		return
+		return nil
+	}
+	if lane == 0 && e.fallback != nil {
+		if scope, root := e.fallback.scope(f.Path); root != nil && scope == fallbackAuto {
+			return nil
+		}
 	}
 	k := regionKey{f.ID.Dev, f.ID.Ino, offset}
 	if r := e.regions[k]; r != nil {
-		return
+		return nil
 	}
-	if len(e.regions) >= e.c.MaxRegions {
+	if len(e.regions) >= e.c.MaxRegions || !e.fallbackSlotAvailable(lane) {
 		e.stats.Overflow++
 		e.auditSkip(f.Path, "candidate_limit", &f.ID)
-		return
+		return nil
 	}
 	e.audit.candidateID++
 	r := &region{CandidateID: e.audit.candidateID, Key: k, Path: f.Path, ID: f.ID, Length: length, Before: res, Due: now.Add(time.Duration(e.c.roleConfig(e.c.pathPolicy(f.Path)).ProtectSeconds) * time.Second)}
+	if lane != 0 {
+		r.Fallback, r.DiscoverySource, r.Due = lane, source, now
+		e.fallback.lanes[lane].pending++
+	}
 	e.regions[k] = r
 	e.queue = append(e.queue, r)
 	e.candidateEvent(r, "created", res, now)
+	return r
 }
-func (e *engine) removeRegion(r *region) { delete(e.regions, r.Key) }
+func (e *engine) removeRegion(r *region) {
+	delete(e.regions, r.Key)
+	if r.Fallback != 0 {
+		e.fallback.lanes[r.Fallback].pending--
+	}
+}
 func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	if now.Before(r.Due) || now.Before(r.Until) {
 		return
 	}
-	if !r.Check && (e.aliasOverflow || !e.roleAllows(r.Path, now) || e.aliasDenied[[2]uint64{r.Key.Dev, r.Key.Ino}]) {
+	if !r.Check && (e.aliasOverflow || e.aliasDenied[[2]uint64{r.Key.Dev, r.Key.Ino}]) {
 		return
 	}
 	// Do not spend the sampling budget repeatedly on a candidate that cannot
 	// receive advice this tick. Post-advice checks still run while paused.
-	if !r.Check && (!allow.Load() || now.Before(e.cooldown) || e.advice.tokens < float64(r.Length)) {
+	if !r.Check && (!e.regionAllowed(r, allow, now) || now.Before(e.cooldown) || e.advice.tokens < float64(r.Length)) {
 		return
 	}
 	needed := float64(r.Length)
@@ -431,6 +459,13 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		e.removeRegion(r)
 		return
 	}
+	if !r.Check && e.fallback != nil {
+		_, root := e.fallback.scope(r.Path)
+		if root != nil && !e.fallbackFileSafe(r.Path, id, f, now, r.Fallback != 0) {
+			r.Due = now.Add(time.Second)
+			return
+		}
+	}
 	res, err := resident(f, r.Key.Offset, r.Length)
 	if err != nil {
 		e.auditSkip(r.Path, "residency_unavailable", &id)
@@ -441,6 +476,9 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	}
 	e.auditQuery(r.Path, id, r.Key.Offset, r.Length, res, "recheck")
 	e.stats.ScannedBytes += r.Length
+	if r.Fallback != 0 {
+		e.stats.FallbackScannedBytes += r.Length
+	}
 	e.stats.ObservedResidentBytes += res
 	if r.Check {
 		r.RecheckStage++
@@ -448,8 +486,21 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		if r.RecheckStage == 1 && r.LastRecheckResident == 0 && r.After > 0 {
 			r.LastRecheckResident = r.After
 		}
-		again := max64(0, res-r.LastRecheckResident)
+		last := r.LastRecheckResident
+		again := max64(0, res-last)
 		r.LastRecheckResident = res
+		netChange := last - res
+		if r.RecheckStage == 1 {
+			netChange = r.Before - res
+		}
+		if r.Fallback != 0 {
+			s := &e.fallback.lanes[r.Fallback].stats
+			s.Rechecks++
+			s.DelayedNet += netChange
+			s.Reappeared += again
+		} else if e.fallback != nil {
+			e.stats.MainRecheckedNetBytes += netChange
+		}
 		e.stats.ReappearedBytes += again
 		e.auditGroup(r.Path).ReappearedBytes += again
 		if float64(max64(0, res-r.After)) > float64(max64(1, r.Before-r.After))*e.c.MaxReappearanceRatio {
@@ -508,7 +559,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	g.EligibleBytes += res
 	g.EligiblePages += uint64(res / int64(os.Getpagesize()))
 	e.candidateEvent(r, "policy_eligible", res, now)
-	if !allow.Load() || now.Before(e.cooldown) || !e.revisit.take(float64(r.Length)) || !e.advice.take(float64(r.Length)) {
+	if !e.regionAllowed(r, allow, time.Now()) || now.Before(e.cooldown) || !e.revisit.take(float64(r.Length)) || !e.advice.take(float64(r.Length)) {
 		return
 	}
 	// Revalidate immediately before advice. A concurrent writer can still race;
@@ -519,7 +570,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		e.removeRegion(r)
 		return
 	}
-	if !allow.Load() || !e.roleAllows(r.Path, time.Now()) || !e.roleRootUnchanged(r.Path) {
+	if !e.roleRootUnchanged(r.Path) {
 		return
 	}
 	if e.c.pathPolicy(r.Path).Role == "backup-output" {
@@ -531,6 +582,12 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			return
 		}
 	}
+	if !e.regionAllowed(r, allow, time.Now()) {
+		return
+	}
+	if r.Fallback != 0 {
+		e.fallback.lanes[r.Fallback].stats.RoundRequested += r.Length
+	}
 	if err = advise(f, r.Key.Offset, r.Length); err != nil {
 		e.candidateEvent(r, "advice_failed_deferred", res, now)
 		e.failure(err)
@@ -538,6 +595,9 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 		return
 	}
 	e.stats.AdviceBytes += r.Length
+	if r.Fallback != 0 {
+		e.fallback.lanes[r.Fallback].stats.Advice += r.Length
+	}
 	g.AdviceBytes += r.Length
 	r.Attempts++
 	r.AdvisedAt = now
@@ -555,6 +615,11 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	e.stats.ObservedResidentBytes += after
 	reduction := max64(0, res-after)
 	e.stats.NetReductionBytes += reduction
+	if r.Fallback != 0 {
+		e.stats.FallbackScannedBytes += r.Length
+		e.stats.FallbackImmediateBytes += reduction
+		e.fallback.lanes[r.Fallback].stats.Immediate += reduction
+	}
 	g.ReductionBytes += reduction
 	e.candidateEvent(r, "immediate_after", after, now)
 	if reduction == 0 {
@@ -573,11 +638,17 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 }
 func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 	now := time.Now()
+	enabled := allow.Load()
+	if e.fallback != nil {
+		if in := e.fallback.input.Load(); in != nil && in.policy.Allow && (in.reason != "" || e.fallback.current.Reason != "") {
+			enabled = true
+		}
+	}
 	dutyRate := float64(e.c.WorkerBudgetMS) / 1000
 	// Explicit observation needs the configured discovery budget to measure
 	// coverage on large directories. Enforce mode still scans only slowly
 	// while a safety gate has denied new advice.
-	if e.c.Action != "observe" && !allow.Load() && dutyRate > 0.005 {
+	if e.c.Action != "observe" && !enabled && dutyRate > 0.005 {
 		dutyRate = 0.005
 	}
 	e.duty.refill(now, dutyRate, dutyRate)
@@ -619,7 +690,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		e.nextIncrease = now.Add(30 * time.Second)
 	}
 	e.boostWasActive = boostActive
-	if !allow.Load() {
+	if !enabled {
 		e.rate = e.c.InitialReclaimBytesPerSecond
 		e.advice.tokens = 0
 		e.nextIncrease = now.Add(30 * time.Second)
@@ -631,13 +702,20 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		e.nextIncrease = now.Add(30 * time.Second)
 	}
 	e.advice.refill(now, float64(e.rate), float64(e.rate))
-	e.discover(now, now.Add(time.Duration(slice*0.15*float64(time.Second))))
+	if e.fallback != nil {
+		e.fallbackWork(ctx, now, now.Add(time.Duration(slice*0.45*float64(time.Second))), allow)
+	}
+	discoverShare, hintShare, revisitShare := 0.15, 0.30, 0.70
+	if e.fallback != nil {
+		discoverShare, hintShare, revisitShare = 0.55, 0.65, 0.82
+	}
+	e.discover(now, now.Add(time.Duration(slice*discoverShare*float64(time.Second))))
 	if e.hints != nil {
-		e.hints.poll(e, now, now.Add(time.Duration(slice*0.30*float64(time.Second))))
+		e.hints.poll(e, now, now.Add(time.Duration(slice*hintShare*float64(time.Second))))
 	}
 	// Due regions are revisited independently of full-directory coverage.
 	count := len(e.queue)
-	for i := 0; i < count && time.Now().Before(now.Add(time.Duration(slice*0.70*float64(time.Second)))); i++ {
+	for i := 0; i < count && time.Now().Before(now.Add(time.Duration(slice*revisitShare*float64(time.Second)))); i++ {
 		if len(e.queue) == 0 {
 			break
 		}
@@ -657,7 +735,13 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 		if ctx.Err() != nil {
 			break
 		}
-		e.inspect(r, now, allow)
+		if r.Fallback != 0 && !r.Check {
+			start := time.Now()
+			e.inspect(r, now, allow)
+			e.fallback.lanes[r.Fallback].stats.RoundWorkUS += time.Since(start).Microseconds()
+		} else {
+			e.inspect(r, now, allow)
+		}
 	}
 	if e.hints != nil {
 		e.hints.sample(e, now, now.Add(time.Duration(slice*0.90*float64(time.Second))))
@@ -812,6 +896,7 @@ func (e *engine) deferScan(until time.Time) bool {
 	return false
 }
 func (e *engine) snapshot(now time.Time) Counters {
+	e.stats.Fallback = e.fallbackSnapshot()
 	e.stats.SweepInProgress = e.sweepOpen
 	e.stats.SweepAgeSeconds = 0
 	if e.sweepOpen {

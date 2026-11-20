@@ -52,6 +52,8 @@ type RootScope struct {
 	Filesystem string    `json:"filesystem,omitempty"`
 }
 type CandidateEvent struct {
+	FallbackScope      string    `json:"fallback_scope,omitempty"`
+	DiscoverySource    string    `json:"discovery_source,omitempty"`
 	Role               string    `json:"path_role,omitempty"`
 	Sequence           uint64    `json:"sequence"`
 	CandidateID        uint64    `json:"candidate_id"`
@@ -289,6 +291,9 @@ func (e *engine) candidateEvent(r *region, outcome string, res int64, now time.T
 		observed = &n
 	}
 	v := CandidateEvent{Role: e.c.pathPolicy(r.Path).Role, Sequence: e.audit.sequence, CandidateID: r.CandidateID, Time: now, Outcome: outcome, Path: r.Path, Device: r.Key.Dev, Inode: r.Key.Ino, Offset: r.Key.Offset, Length: r.Length, Attempts: r.Attempts, Recheck: r.RecheckStage, ResidentBytes: observed, SinceAdviceSeconds: since}
+	if r.Fallback != 0 {
+		v.FallbackScope, v.DiscoverySource = fallbackScopeName(r.Fallback), r.DiscoverySource
+	}
 	if len(e.audit.events) >= e.c.MaxCandidateEvents {
 		e.audit.events[e.audit.eventCursor] = v
 		e.audit.eventCursor = (e.audit.eventCursor + 1) % len(e.audit.events)

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/cuipengdba/ContainerCacheGuard/internal/vmtouch"
 )
 
 const linuxOPath = 0x200000
@@ -193,11 +195,7 @@ func advise(f *os.File, offset, length int64) error {
 	if offset%page != 0 || length <= 0 {
 		return errors.New("empty or unaligned advice")
 	}
-	_, _, e := syscall.Syscall6(syscall.SYS_FADVISE64, f.Fd(), uintptr(offset), uintptr(length), 4, 0, 0)
-	if e != 0 {
-		return e
-	}
-	return nil
+	return vmtouch.Evict(f.Fd(), offset, length)
 }
 func values(path string) map[string]int64 {
 	b, e := os.ReadFile(path)
@@ -421,6 +419,11 @@ func (r *metricReader) sample(c Config) Metrics {
 	m.Current, e = number(filepath.Join(r.path, "memory.current"))
 	if e == nil {
 		m.Version = 2
+		if c.CacheFallback.Enabled {
+			if high, err := number(filepath.Join(r.path, "memory.high")); err == nil && high >= 0 {
+				m.MemoryHigh = &high
+			}
+		}
 		m.Limit, e = number(filepath.Join(r.path, "memory.max"))
 		m.File = s["file"]
 		m.Anon = s["anon"]

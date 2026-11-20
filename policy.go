@@ -6,6 +6,7 @@ import (
 )
 
 type Metrics struct {
+	MemoryHigh            *int64          `json:"memory_high_bytes,omitempty"`
 	NodeSignalError       string          `json:"node_signal_error,omitempty"`
 	BusinessSignalError   string          `json:"business_signal_error,omitempty"`
 	CgroupDevice          uint64          `json:"cgroup_device,omitempty"`

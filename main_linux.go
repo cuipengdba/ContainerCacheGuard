@@ -445,6 +445,13 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 		eng.close()
 		return err
 	}
+	if c.CacheFallback.Enabled && eng.hints != nil {
+		eng.hints.trackWrites = true
+	}
+	if err := eng.initFallback(); err != nil {
+		eng.close()
+		return err
+	}
 	var tasks taskMonitor
 	roleRecovery := map[string]*recoveryGate{}
 	go func() {
@@ -473,6 +480,9 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 	var previousDecision *Decision
 	busySince := time.Time{}
 	var recovery recoveryGate
+	var fallbackRecovery recoveryGate
+	fallbackRoleRecovery := map[string]*recoveryGate{}
+	memoryHighDrift := ""
 	var external externalGuard
 	nextSample := time.Time{}
 	nextWork := time.Time{}
@@ -482,6 +492,9 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 		select {
 		case <-ctx.Done():
 			allow.Store(false)
+			if eng.fallback != nil {
+				eng.fallback.input.Store(nil)
+			}
 			s.Time = time.Now()
 			s.Decision = Decision{State: "STOPPED", Reason: "shutdown"}
 			if e = atomicJSON(c.StateFile, s); e != nil {
@@ -492,6 +505,9 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 			if sig == syscall.SIGUSR1 {
 				s.Paused = true
 				allow.Store(false)
+				if eng.fallback != nil {
+					eng.fallback.input.Store(nil)
+				}
 			} else if sig == syscall.SIGUSR2 {
 				s.Paused = false
 			} else {
@@ -508,6 +524,9 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				// File/state logging can wait for storage. Do not leave an old
 				// permission armed while the sampler is waiting for IO.
 				allow.Store(false)
+				if eng.fallback != nil {
+					eng.fallback.input.Store(nil)
+				}
 				if e = logs.Maintain(); e != nil {
 					allow.Store(false)
 					return fmt.Errorf("daily log maintenance failed; stopping advice: %w", e)
@@ -516,6 +535,20 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				business(c, &m)
 				nodeSignal(c, &m)
 				external.check(&m)
+				if c.CacheFallback.Enabled && c.CacheFallback.ExpectedMemoryHighBytes != nil {
+					drift := ""
+					if m.MemoryHigh != nil && *m.MemoryHigh != *c.CacheFallback.ExpectedMemoryHighBytes {
+						drift = fmt.Sprint(*m.MemoryHigh)
+					}
+					if drift != "" && drift != memoryHighDrift {
+						if e = logs.WriteJSON(map[string]any{"time": now, "event": "memory_high_drift", "level": "WARN",
+							"instance_id": c.InstanceID, "cgroup": m.Cgroup, "actual_bytes": m.MemoryHigh,
+							"expected_bytes": c.CacheFallback.ExpectedMemoryHighBytes}); e != nil {
+							return e
+						}
+					}
+					memoryHighDrift = drift
+				}
 				if !oomBaselineReady && m.Available["oom_kill_total"] {
 					oomBaseline, oomBaselineReady = m.OOMKill, true
 				}
@@ -602,6 +635,25 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 					previousLog = &logged
 				}
 				roles.snapshot.Store(&pathPermissions{Time: now, Roles: s.PathRoles, Tasks: s.Tasks})
+				if eng.fallback != nil {
+					fc := c
+					fc.Trigger, fc.PressureBoost = "always", false
+					if !c.CacheFallback.AllowBoundedCritical {
+						fc.CriticalMode = "pause"
+					}
+					policy := decide(fc, m, started, now, s.Paused, oomBaseline)
+					fallbackRoles, policy := roleDecisions(fc, m, started, now, s.Paused, oomBaseline, policy, fallbackRoleRecovery)
+					if s.Tasks.State == "unknown" || s.WorkerBusySeconds > 5 ||
+						(s.KernelReclaim != nil && s.KernelReclaim.HoldFile) {
+						policy.Allow, policy.State, policy.Reason = false, "SUSPENDED", s.Decision.Reason
+					}
+					policy, _ = fallbackRecovery.apply(fc, policy, now)
+					eng.fallback.input.Store(&fallbackInput{
+						metrics: m, policy: policy, signals: s.Signals,
+						reason:     fallbackTrigger(c, m, s.Signals, s.Decision.CacheTarget),
+						permission: pathPermissions{Time: now, Roles: fallbackRoles, Tasks: s.Tasks},
+					})
+				}
 				boost.Store(s.Decision.Allow && s.Decision.PressureBoost)
 				allow.Store(s.Decision.Allow && adviceFresh(c, m, time.Now()))
 				nextSample = now.Add(time.Duration(c.IntervalMS) * time.Millisecond)
@@ -610,13 +662,14 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				allow.Store(false)
 			}
 			// A single worker. Even if a syscall blocks, never spawn replacements.
-			if !now.Before(nextWork) && !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" && s.Decision.State != "CRITICAL" && s.Metrics.Error == "" &&
+			if !now.Before(nextWork) && !s.WorkerBusy && s.Decision.Reason != "self_resource_budget" &&
+				(s.Decision.State != "CRITICAL" || eng.fallback != nil) && s.Metrics.Error == "" &&
 				s.Metrics.Available["self_rss_bytes"] && s.Metrics.Available["self_cpu_percent"] &&
 				(c.Action == "observe" || (s.Protection != nil && s.Protection.Ready)) {
 				s.WorkerBusy = true
 				busySince = now
 				spacing := 200 * time.Millisecond
-				if allow.Load() {
+				if allow.Load() || (eng.fallback != nil && eng.fallback.input.Load() != nil && eng.fallback.input.Load().policy.Allow) {
 					spacing = 20 * time.Millisecond
 				}
 				nextWork = now.Add(spacing)
