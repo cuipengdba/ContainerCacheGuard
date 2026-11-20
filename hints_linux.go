@@ -286,7 +286,7 @@ func (h *accessHints) sample(e *engine, now, deadline time.Time) {
 			h.cursor++
 			continue
 		}
-		res, err := resident(f, hint.offset, length)
+		res, err := e.resident(f, hint.offset, length)
 		f.Close()
 		if err != nil {
 			e.auditSkip(hint.path, "residency_unavailable", &id)

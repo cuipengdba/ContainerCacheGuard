@@ -525,7 +525,7 @@ func (e *engine) fallbackScan(l *fallbackScope, lane int, now time.Time, allow *
 		l.stats.Skipped["region_already_indexed"]++
 		return
 	}
-	res, err := resident(file, offset, length)
+	res, err := e.resident(file, offset, length)
 	if err != nil {
 		l.stats.Skipped["residency_unavailable"]++
 		return

@@ -40,7 +40,7 @@ def io_values(path):
 
 
 def resident(path):
-    with path.open("rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_COPY) as mapping:
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOATIME), "rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_COPY) as mapping:
         sentinel = ctypes.c_char.from_buffer(mapping)
         pages = (len(mapping) + PAGE - 1) // PAGE
         vec = (ctypes.c_ubyte * pages)()
@@ -87,7 +87,7 @@ def helper(mode, cg, target="", marker=""):
         for offset in range(0, len(memory), PAGE):
             memory[offset] = 1
         Path(marker).touch()
-        time.sleep(85)
+        time.sleep(108)
 
 
 def p99(values):
@@ -195,8 +195,8 @@ def trial(name, binary, vmtouch, base, result):
                    log_directory=str(state / "log"), interval_ms=200, log_interval_seconds=1, warmup_seconds=2,
                    recovery_healthy_seconds=0, protect_seconds=5, min_file_age_seconds=5,
                    recheck_seconds=2, extended_recheck_seconds=[8, 30], rescan_seconds=3600,
-                   cache_target_bytes=512 * MiB, initial_reclaim_bytes_per_second=64 * MiB,
-                   reclaim_bytes_per_second=64 * MiB, scan_bytes_per_second=512 * MiB, worker_budget_ms=100,
+                   cache_target_bytes=128 * MiB, initial_reclaim_bytes_per_second=64 * MiB,
+                   reclaim_bytes_per_second=64 * MiB, scan_bytes_per_second=768 * MiB, worker_budget_ms=100,
                    max_cpu_percent=50, max_dirty_bytes=128 * MiB, max_io_psi_avg10=90)
         if name == "fallback":
             cfg["cache_fallback"] = dict(enabled=True, pgdata=str(pgdata), backup_directories=[str(backup)],
@@ -221,7 +221,7 @@ def trial(name, binary, vmtouch, base, result):
         spawn("hot", leaf, hot)
         probe = Probe()
         start = time.monotonic()
-        snapshots = result["samples"] = []
+        snapshots = result["series"] = []
         finding = None
         first_advice = None
         first_drop = None
@@ -237,10 +237,10 @@ def trial(name, binary, vmtouch, base, result):
         reads_at_close = None
         report_rounds = []
         last_round = 0
-        while (elapsed := time.monotonic() - start) < 67:
+        while (elapsed := time.monotonic() - start) < 88:
             assert ccg.poll() is None, (area / "console.log").read_text()[-4000:]
             if elapsed >= 19 and pressure is None:
-                pressure = spawn("pressure", sibling, 900, area / "pressure-ready")
+                pressure = spawn("pressure", sibling, 1024, area / "pressure-ready")
             if elapsed >= 27 and backup_job is None:
                 backup_job = spawn("exec", leaf, shutil.which("pg_basebackup"), "-D", sql_backup, "-X", "stream",
                                    "--checkpoint=fast", "--max-rate=2M", "-d",
@@ -349,10 +349,17 @@ def main():
                   scope="Disposable cgroup-v2 development fixtures and a PG14 service. The legacy comparator receives the same three directories. No live kubelet in this comparison.")
     try:
         with tempfile.TemporaryDirectory(prefix="ccg-fallback-") as tmp:
+            failures = []
             for name in ("original", "fallback", "legacy"):
                 result = report["trials"][name] = {}
-                trial(name, args.binary.resolve(), args.vmtouch.resolve(), Path(tmp), result)
-                print(name, {k: result[k] for k in ("final_net_decrease", "first_gib_drop_seconds", "sql_p99_ms")}, flush=True)
+                try:
+                    trial(name, args.binary.resolve(), args.vmtouch.resolve(), Path(tmp), result)
+                    print(name, {k: result[k] for k in ("final_net_decrease", "first_gib_drop_seconds", "sql_p99_ms")}, flush=True)
+                except Exception as exc:
+                    result["failure"] = f"{type(exc).__name__}: {exc}"
+                    print(name, result["failure"][:1000], flush=True)
+                    failures.append(name)
+            assert not failures, failures
         report["success"] = True
     finally:
         args.output.write_text(json.dumps(report, indent=2) + "\n")

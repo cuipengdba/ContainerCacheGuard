@@ -466,7 +466,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 			return
 		}
 	}
-	res, err := resident(f, r.Key.Offset, r.Length)
+	res, err := e.resident(f, r.Key.Offset, r.Length)
 	if err != nil {
 		e.auditSkip(r.Path, "residency_unavailable", &id)
 		e.candidateEvent(r, "probe_failed_terminal", -1, now)
@@ -606,7 +606,7 @@ func (e *engine) inspect(r *region, now time.Time, allow *atomic.Bool) {
 	r.AdvisedAt = now
 	r.RecheckStage = 0
 	e.candidateEvent(r, "advised", res, now)
-	after, err := resident(f, r.Key.Offset, r.Length)
+	after, err := e.resident(f, r.Key.Offset, r.Length)
 	if err != nil {
 		e.candidateEvent(r, "after_probe_failed_terminal", -1, now)
 		e.failure(err)
@@ -838,7 +838,7 @@ func (e *engine) work(ctx context.Context, allow *atomic.Bool) Counters {
 			e.cursor++
 			continue
 		}
-		res, err := resident(f, entry.Offset, length)
+		res, err := e.resident(f, entry.Offset, length)
 		f.Close()
 		if err != nil {
 			e.auditSkip(entry.Path, "residency_unavailable", &id)

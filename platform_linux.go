@@ -151,6 +151,18 @@ func canMincore(id identity) bool {
 	}
 	return false
 }
+func (e *engine) resident(f *os.File, offset, length int64) (int64, error) {
+	if e.fallback != nil {
+		// generic_file_mmap can update atime even without faulting in a page.
+		// Preserve the activity signal used by the fallback's protection.
+		flags, _, err := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), syscall.F_GETFL, 0)
+		if err == 0 && flags&syscall.O_NOATIME == 0 {
+			_, _, _ = syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), syscall.F_SETFL, flags|syscall.O_NOATIME)
+		}
+	}
+	return resident(f, offset, length)
+}
+
 func resident(f *os.File, offset, length int64) (int64, error) {
 	if length <= 0 {
 		return 0, nil

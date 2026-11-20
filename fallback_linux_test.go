@@ -80,6 +80,39 @@ func TestFallbackStartsEarlyWithoutReplacingActiveRound(t *testing.T) {
 	}
 }
 
+func TestFallbackBoundedUsesExistingVetoesAndEarlyParentLine(t *testing.T) {
+	c := fallbackTestConfig(t)
+	c.Action, c.CriticalMode, c.WarmupSeconds = "enforce", "bounded", 0
+	now := time.Now()
+	m := healthyProtectionMetrics()
+	m.AncestorLimit, m.AncestorCurrent = 52<<30, 48<<30
+	if trigger := fallbackTrigger(c, m, SignalStatus{}, 0); trigger != "ancestor_headroom_warning" {
+		t.Fatalf("large parent did not warn ahead of critical ratio: %s", trigger)
+	}
+	m.AncestorCurrent = 51 << 30
+	if d := decide(c.fallbackPolicyConfig(), m, now, now, false, 0); d.Allow {
+		t.Fatal("fallback inherited bounded critical before explicit opt-in")
+	}
+	c.CacheFallback.AllowBoundedCritical = true
+	fine := decide(c.fallbackPolicyConfig(), m, now, now, false, 0)
+	if !fine.Allow || fine.State != "CONTROL_CRITICAL" || fine.PressureBoost {
+		t.Fatal(fine)
+	}
+	for _, change := range []func(*Metrics){
+		func(m *Metrics) { m.OOMKill = 1 },
+		func(m *Metrics) { m.Dirty = c.MaxDirtyBytes + 1 },
+		func(m *Metrics) { m.Writeback = c.MaxDirtyBytes + 1 },
+		func(m *Metrics) { m.BusinessPause = true },
+		func(m *Metrics) { m.IOPSI = nil },
+	} {
+		unsafe := m
+		change(&unsafe)
+		if d := decide(c.fallbackPolicyConfig(), unsafe, now, now, false, 0); d.Allow {
+			t.Fatal("bounded fallback bypassed a veto", d)
+		}
+	}
+}
+
 func TestFallbackProtectsObservedWriterAndReportOnly(t *testing.T) {
 	c := fallbackTestConfig(t)
 	c.ProtectSeconds, c.MinFileAgeSeconds = 0, 0

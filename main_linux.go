@@ -636,13 +636,12 @@ func runDaemonWithReader(c Config, roots []string, duration time.Duration, reade
 				}
 				roles.snapshot.Store(&pathPermissions{Time: now, Roles: s.PathRoles, Tasks: s.Tasks})
 				if eng.fallback != nil {
-					fc := c
-					fc.Trigger, fc.PressureBoost = "always", false
-					if !c.CacheFallback.AllowBoundedCritical {
-						fc.CriticalMode = "pause"
-					}
+					fc := c.fallbackPolicyConfig()
 					policy := decide(fc, m, started, now, s.Paused, oomBaseline)
 					fallbackRoles, policy := roleDecisions(fc, m, started, now, s.Paused, oomBaseline, policy, fallbackRoleRecovery)
+					if m.Version != 2 {
+						policy.Allow, policy.State, policy.Reason = false, "SUSPENDED", "fallback_requires_cgroup_v2_oom_metrics"
+					}
 					if s.Tasks.State == "unknown" || s.WorkerBusySeconds > 5 ||
 						(s.KernelReclaim != nil && s.KernelReclaim.HoldFile) {
 						policy.Allow, policy.State, policy.Reason = false, "SUSPENDED", s.Decision.Reason

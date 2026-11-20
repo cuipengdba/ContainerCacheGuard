@@ -40,6 +40,14 @@ func (f FallbackConfig) pgdata() string {
 	return os.Getenv("PGDATA")
 }
 
+func (c Config) fallbackPolicyConfig() Config {
+	c.Trigger, c.PressureBoost = "always", false
+	if !c.CacheFallback.AllowBoundedCritical {
+		c.CriticalMode = "pause"
+	}
+	return c
+}
+
 func (c Config) validateFallback() error {
 	f := c.CacheFallback
 	if !f.Enabled {
