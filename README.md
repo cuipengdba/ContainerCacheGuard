@@ -9,7 +9,9 @@
 
 **当前架构（2026-11-17）：数据库和备份继续在同一容器。** DBS、HISDBS各保留原容器，内部运行数据库、原备份工具和一个CCG；源与输出共用总预算。[同容器架构](docs/SAME-CONTAINER.zh.md)。rc.18已实现路径策略、任务包装与采集命令；本轮仅在隔离CI验证和发布，未连接/改动171或94。普通run无PG客户端/Python依赖，可选node-collect复用节点既有kubectl。
 
-**最新候选为[0.2.0-rc.18](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.18)：同容器统一预算下的路径角色、任务阶段保护和可选节点采集。** 原生amd64/arm64各通过134项顶层race单测、45项原CLI与5项新增CLI契约；单独PG14同容器备份校验及独立恢复30000行通过。文件夹具净下降≥1GiB并复查持续120秒，内核仍单次/重启去重。完整数字、IO与SQL/API代价见[实际交付](docs/RC18-DELIVERY.zh.md)，用法/参数见[rc.18手册](docs/RC18-USAGE.zh.md)。未完成真实DBS/无PSI生产资格或48小时驱逐验收。
+**最新候选 v0.2.0-rc.19 增加 30 秒文件缓存回收保底。** 显式开启后，PGDATA 和备份目录走固定范围，自动发现范围默认只报告。父级余量下降时可提前开始一批，保留现有 OOM、IO 和业务保护。实际 kubelet 驱逐及低影响验收仍待完成。 [下载候选版](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.19) · [用法和配置](docs/CACHE-FALLBACK.zh.md) · [三组开发对照](docs/CACHE-FALLBACK-RESULTS.zh.md)
+
+**历史候选[0.2.0-rc.18](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.18)：同容器统一预算下的路径角色、任务阶段保护和可选节点采集。** 原生amd64/arm64各通过134项顶层race单测、45项原CLI与5项新增CLI契约；单独PG14同容器备份校验及独立恢复30000行通过。文件夹具净下降≥1GiB并复查持续120秒，内核仍单次/重启去重。完整数字、IO与SQL/API代价见[实际交付](docs/RC18-DELIVERY.zh.md)，用法/参数见[rc.18手册](docs/RC18-USAGE.zh.md)。未完成真实DBS/无PSI生产资格或48小时驱逐验收。
 
 **历史候选[0.2.0-rc.17](https://github.com/cuipengdba/ContainerCacheGuard/releases/tag/v0.2.0-rc.17)：新增驱逐前单次memory.reclaim后端，默认关闭。** 每事件至多一次持久登记、节点串行、受限Unix Socket、阻塞辅助进程、真实保护与120秒复查。原生amd64/arm64各119项顶层race单测、45项CLI和真实内核隔离实验通过；1.125GiB缓存池请求256MiB，120秒末文件净下降约250MiB，执行器重启后没有重复调用。不是实际Kubernetes驱逐验收。[详细使用和全部参数](docs/RC17-USAGE.zh.md)、[实际结果与风险](docs/RC17-DELIVERY.zh.md)。
 
@@ -99,7 +101,7 @@ DBS、HISDBS各运行一个CCG，数据库、备份、校验/同步与CCG共享�
 
 ## 完整文档
 
-当前已发布rc.18；[完整使用手册](docs/RC18-USAGE.zh.md)包含新增参数、同容器模板、任务包装、节点采集和回退。[交付结果](docs/RC18-DELIVERY.zh.md)明确通过和未验收范围；[原始规划](docs/RC18-PLAN.zh.md)保留C039背景，不能用规划数字代替实测。
+rc.19 的保底功能、配置样例和诊断字段见[保底手册](docs/CACHE-FALLBACK.zh.md)。沿用的同容器路径角色、任务包装和节点采集参数见[rc.18 手册](docs/RC18-USAGE.zh.md)。
 
 - [命令与全部配置参数](docs/CONFIGURATION.zh.md)：每个参数的单位、默认值和调整影响。
 - [每日日志与自动清理](docs/LOGGING.zh.md)：一天一个文件、30天和1GB边界、两个实例目录及权限。

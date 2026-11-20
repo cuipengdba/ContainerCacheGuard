@@ -1,7 +1,7 @@
 name: ContainerCacheGuard native CI
 on:
   push:
-    branches: [main]
+    branches: [main, codex/cache-fallback-dev]
   pull_request:
   workflow_dispatch:
 permissions:

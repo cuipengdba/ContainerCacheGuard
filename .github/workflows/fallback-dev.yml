@@ -40,9 +40,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=0.2.0-dev.fallback -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard .
+          version="$(cat VERSION)"
+          if [[ -n "$(git status --porcelain)" ]]; then git status --short; exit 1; fi
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" -o dist/containercacheguard .
+          dist/containercacheguard version | tee dist/binary-version.txt
+          grep -Fqx "ContainerCacheGuard ${version} (${GITHUB_SHA}) linux/${{ matrix.arch }}" dist/binary-version.txt
           ! readelf -l dist/containercacheguard | grep -q INTERP
           ! readelf -d dist/containercacheguard | grep -q NEEDED
+          dist/containercacheguard check-config --config deploy/fallback/same-container.json
           curl --fail --retry 3 --silent --show-error --location 'https://raw.githubusercontent.com/hoytech/vmtouch/b8b30e81d51544d6b8f428552f10d5b398a77fcb/vmtouch.c' -o dist/vmtouch.c
           cc -O2 -static -o dist/vmtouch dist/vmtouch.c
       - name: Authorize backup from the runner in the disposable PostgreSQL service
@@ -73,4 +78,7 @@ jobs:
         if: always()
         with:
           name: fallback-dev-${{ matrix.arch }}
-          path: fallback-results.json
+          path: |
+            fallback-results.json
+            dist/containercacheguard
+            dist/binary-version.txt
